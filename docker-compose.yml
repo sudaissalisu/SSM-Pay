@@ -1,0 +1,350 @@
+# =============================================================================
+# SSM-Pay Payment Platform - Docker Compose Configuration
+# =============================================================================
+# Full-stack infrastructure for production deployment including:
+# - Next.js Application Server
+# - Redis (Cache & Session Store)
+# - PostgreSQL (Primary Database)
+# - Redis Commander (Redis Management UI)
+# - Prometheus (Metrics Collection)
+# - Grafana (Visualization & Dashboards)
+#
+# Usage:
+#   Production:  docker compose up -d
+#   Development: docker compose --profile dev up -d
+#   Stop:        docker compose down
+#   Logs:        docker compose logs -f [service]
+# =============================================================================
+
+version: '3.8'
+
+# =============================================================================
+# Common Configuration
+# =============================================================================
+x-app-common: &app-common
+  restart: unless-stopped
+  networks:
+    - ssm-pay-network
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+x-healthcheck-defaults: &healthcheck-defaults
+  interval: 30s
+  timeout: 10s
+  retries: 3
+  start_period: 40s
+
+# =============================================================================
+# Services Definition
+# =============================================================================
+services:
+  # ---------------------------------------------------------------------------
+  # Application Server (Next.js)
+  # ---------------------------------------------------------------------------
+  app:
+    <<: *app-common
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runner
+      args:
+        NODE_VERSION: "20"
+    container_name: ssm-pay-app
+    hostname: app
+    ports:
+      - "${APP_PORT:-3000}:3000"
+    environment:
+      # Application Settings
+      - NODE_ENV=production
+      - NEXT_TELEMETRY_DISABLED=1
+      - PORT=3000
+      - HOSTNAME=0.0.0.0
+      
+      # Database Configuration
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-ssm_pay}?schema=public
+      
+      # Redis Configuration
+      - REDIS_URL=redis://redis:6379
+      - REDIS_CACHE_TTL=${REDIS_CACHE_TTL:-3600}
+      
+      # Security & Auth
+      - JWT_SECRET=${JWT_SECRET:-your-super-secret-jwt-key-change-in-production}
+      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET:-your-nextauth-secret-change-in-production}
+      - NEXTAUTH_URL=${NEXTAUTH_URL:-http://localhost:3000}
+      
+      # Payment Gateway (ZainPay)
+      - ZAINPAY_API_KEY=${ZAINPAY_API_KEY:-}
+      - ZAINPAY_PUBLIC_KEY=${ZAINPAY_PUBLIC_KEY:-}
+      - ZAINPAY_BASE_URL=${ZAINPAY_BASE_URL:-https://api.zainpay.ng}
+      
+      # Monitoring
+      - ENABLE_METRICS=true
+      - PROMETHEUS_PORT=${PROMETHEUS_PORT:-9091}
+      
+      # Feature Flags
+      - ENABLE_RATE_LIMITING=true
+      - RATE_LIMIT_WINDOW_MS=${RATE_LIMIT_WINDOW_MS:-60000}
+      - RATE_LIMIT_MAX_REQUESTS=${RATE_LIMIT_MAX_REQUESTS:-100}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+    volumes:
+      - app-uploads:/app/uploads
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    labels:
+      - "com.ssm-pay.service=app"
+      - "prometheus.job=ssm-pay"
+      - "prometheus.port=3000"
+
+  # ---------------------------------------------------------------------------
+  # Redis - Cache & Session Store
+  # ---------------------------------------------------------------------------
+  redis:
+    <<: *app-common
+    image: redis:7-alpine
+    container_name: ssm-pay-redis
+    hostname: redis
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    command: redis-server /usr/local/etc/redis/redis.conf
+    volumes:
+      - redis-data:/data
+      - ./redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
+    environment:
+      - REDIS_MAX_MEMORY=${REDIS_MAX_MEMORY:-256mb}
+      - REDIS_MAX_MEMORY_POLICY=${REDIS_MAX_MEMORY_POLICY:-allkeys-lru}
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD", "redis-cli", "ping"]
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+    labels:
+      - "com.ssm-pay.service=redis"
+
+  # ---------------------------------------------------------------------------
+  # Redis Commander - Web-based Redis Management UI
+  # ---------------------------------------------------------------------------
+  redis-commander:
+    <<: *app-common
+    image: rediscommander/redis-commander:latest
+    container_name: ssm-pay-redis-ui
+    hostname: redis-commander
+    ports:
+      - "${REDIS_COMMANDER_PORT:-8081}:8081"
+    environment:
+      - REDIS_HOSTS=local:redis:6379
+      - HTTP_USER=${REDIS_UI_USER:-admin}
+      - HTTP_PASSWORD=${REDIS_UI_PASSWORD:-admin123}
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8081/"]
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+
+  # ---------------------------------------------------------------------------
+  # PostgreSQL - Primary Database
+  # ---------------------------------------------------------------------------
+  postgres:
+    <<: *app-common
+    image: postgres:16-alpine
+    container_name: ssm-pay-postgres
+    hostname: postgres
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
+      - POSTGRES_DB=${POSTGRES_DB:-ssm_pay}
+      - PGDATA=/var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-ssm_pay}"]
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    labels:
+      - "com.ssm-pay.service=database"
+
+  # ---------------------------------------------------------------------------
+  # Prometheus - Metrics Collection & Alerting
+  # ---------------------------------------------------------------------------
+  prometheus:
+    <<: *app-common
+    image: prom/prometheus:v2.48.0
+    container_name: ssm-pay-prometheus
+    hostname: prometheus
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    volumes:
+      - prometheus-data:/prometheus
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/alert_rules.yml:/etc/prometheus/alert_rules.yml:ro
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-30d}'
+      - '--storage.tsdb.retention.size=${PROMETHEUS_RETENTION_SIZE:-10GB}'
+      - '--web.enable-lifecycle'
+      - '--web.enable-admin-api'
+      - '--log.level=info'
+    depends_on:
+      - app
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9090/-/healthy"]
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+    labels:
+      - "com.ssm-pay.service=monitoring"
+
+  # ---------------------------------------------------------------------------
+  # Grafana - Visualization & Dashboards
+  # ---------------------------------------------------------------------------
+  grafana:
+    <<: *app-common
+    image: grafana/grafana:10.2.0
+    container_name: ssm-pay-grafana
+    hostname: grafana
+    ports:
+      - "${GRAFANA_PORT:-3001}:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin123}
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_SERVER_ROOT_URL=%(protocol)s://%(domain)s:${GRAFANA_PORT:-3001}/
+      - GF_ANALYTICS_REPORTING_ENABLED=false
+      - GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH=/var/lib/grafana/dashboards/payment-dashboard.json
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/provisioning/datasources.yml:/etc/grafana/provisioning/datasources/datasource.yml:ro
+      - ./grafana/provisioning/dashboards.yml:/etc/grafana/provisioning/dashboards/dashboard.yml:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      - prometheus
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:3000/api/health || curl -f http://localhost:3000/api/health"]
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+    labels:
+      - "com.ssm-pay.service=visualization"
+
+  # ---------------------------------------------------------------------------
+  # Nginx - Reverse Proxy (Optional, for production use)
+  # ---------------------------------------------------------------------------
+  nginx:
+    <<: *app-common
+    image: nginx:alpine
+    container_name: ssm-pay-nginx
+    hostname: nginx
+    ports:
+      - "${NGINX_HTTP_PORT:-80}:80"
+      - "${NGINX_HTTPS_PORT:-443}:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+      - nginx-logs:/var/log/nginx
+    depends_on:
+      - app
+    profiles:
+      - production
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:80/health"]
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+
+# =============================================================================
+# Networks Configuration
+# =============================================================================
+networks:
+  ssm-pay-network:
+    name: ssm-pay-network
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+
+# =============================================================================
+# Volumes Configuration (Persistent Data)
+# =============================================================================
+volumes:
+  # Application uploads and static files
+  app-uploads:
+    name: ssm-pay-uploads
+    driver: local
+  
+  # Redis data persistence
+  redis-data:
+    name: ssm-pay-redis-data
+    driver: local
+  
+  # PostgreSQL data persistence
+  postgres-data:
+    name: ssm-pay-postgres-data
+    driver: local
+  
+  # Prometheus metrics storage
+  prometheus-data:
+    name: ssm-pay-prometheus-data
+    driver: local
+  
+  # Grafana configuration and dashboards
+  grafana-data:
+    name: ssm-pay-grafana-data
+    driver: local
+  
+  # Nginx access/error logs
+  nginx-logs:
+    name: ssm-pay-nginx-logs
+    driver: local

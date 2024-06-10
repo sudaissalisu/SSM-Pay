@@ -1,0 +1,99 @@
+# =============================================================================
+# SSM-Pay Payment Platform - Custom Redis Docker Build
+# =============================================================================
+# Custom Redis image with:
+# - Redis 7.x with optional modules (RedisJSON, RediSearch, RedisTimeSeries)
+# - Custom configuration for production use
+# - Persistence enabled by default
+# - Memory management optimizations
+# - Security hardening
+# =============================================================================
+
+FROM redis:7-alpine AS base
+
+# Build arguments for customization
+ARG REDIS_VERSION=7.2
+ARG ENABLE_MODULES=false
+
+# Metadata labels
+LABEL maintainer="SSM-Pay Team"
+LABEL org.opencontainers.image.title="SSM-Pay Redis"
+LABEL org.opencontainers.image.description="Custom Redis for payment platform caching"
+LABEL org.opencontainers.image.version="${REDIS_VERSION}"
+
+# Install required packages
+RUN apk add --no-cache \
+    bash \
+    curl \
+    tzdata \
+    && cp /usr/share/zoneinfo/Africa/Lagos /etc/localtime \
+    && echo "Africa/Lagos" > /etc/timezone \
+    && apk del tzdata
+
+# Create non-root user for security
+RUN addgroup -S redis && adduser -S -G redis redis
+
+# Create necessary directories
+RUN mkdir -p /data /var/log/redis /usr/local/etc/redis && \
+    chown -R redis:redis /data /var/log/redis /usr/local/etc/redis
+
+# Copy custom Redis configuration
+COPY redis/redis.conf /usr/local/etc/redis/redis.conf
+
+# Set proper permissions on config
+RUN chmod 640 /usr/local/etc/redis/redis.conf && \
+    chown redis:redis /usr/local/etc/redis/redis.conf
+
+# Optional: Download and install Redis modules
+# Uncomment and modify if you need advanced modules
+# RUN if [ "$ENABLE_MODULES" = "true" ]; then \
+#     cd /tmp && \
+#     curl -L -o rejson.tar.gz https://packages.redis.io/redisstack/redis-stack-server-7.2.0-v9.x86_64.tar.gz && \
+#     tar xzf rejson.tar.gz && \
+#     cp librejson.so /usr/local/lib/ && \
+#     rm -rf /tmp/*; \
+#     fi
+
+# Switch to non-root user
+USER redis
+
+# Expose Redis port
+EXPOSE 6379
+
+# Data volume for persistence
+VOLUME ["/data"]
+
+# Health check
+HEALTHCHECK --interval=15s --timeout=3s --start-period=5s --retries=3 \
+    CMD redis-cli ping || exit 1
+
+# Default command with custom configuration
+CMD ["redis-server", "/usr/local/etc/redis/redis.conf", "--loglevel", "notice"]
+
+# =============================================================================
+# Environment Variables
+# =============================================================================
+# REDIS_MAX_MEMORY       - Maximum memory usage (default: 256mb)
+# REDIS_MAX_MEMORY_POLICY - Eviction policy when memory limit reached
+# REDIS_PASSWORD         - Authentication password (if required)
+# REDIS_AOF_ENABLED      - Enable AOF persistence (true/false)
+# REDIS_RDB_ENABLED      - Enable RDB snapshots (true/false)
+# =============================================================================
+
+# =============================================================================
+# Usage Examples:
+# 
+# Basic build:
+#   docker build -f Dockerfile.redis -t ssm-pay-redis .
+#
+# With modules:
+#   docker build --build-arg ENABLE_MODULES=true -f Dockerfile.redis -t ssm-pay-redis:modules .
+#
+# Run container:
+#   docker run -d --name redis \
+#     -p 6379:6379 \
+#     -v redis-data:/data \
+#     -e REDIS_MAX_MEMORY=512mb \
+#     ssm-pay-redis
+#
+# =============================================================================

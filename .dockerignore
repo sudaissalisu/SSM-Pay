@@ -1,0 +1,235 @@
+# =============================================================================
+# SSM-Pay Payment Platform - Docker Ignore Configuration
+# =============================================================================
+# Comprehensive ignore patterns to optimize Docker build context
+# and exclude unnecessary files from the build image.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Dependencies (installed during build, not needed in context)
+# -----------------------------------------------------------------------------
+node_modules
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnp.*
+.pnp.js
+
+# -----------------------------------------------------------------------------
+# Build Outputs (generated during Docker build)
+# -----------------------------------------------------------------------------
+.next
+out
+build
+dist
+.cache
+
+# -----------------------------------------------------------------------------
+# Testing & Coverage
+# -----------------------------------------------------------------------------
+coverage
+.nyc_output
+.vitest
+**/*.test.ts
+**/*.test.tsx
+**/*.spec.ts
+**/*.spec.tsx
+__tests__
+tests
+test
+jest.config.js
+jest.config.ts
+vitest.config.ts
+playwright.config.ts
+cypress
+
+# -----------------------------------------------------------------------------
+# IDE & Editor Files
+# -----------------------------------------------------------------------------
+.idea
+.vscode
+*.swp
+*.swo
+*~
+.project
+.classpath
+.c9/
+*.launch
+.settings/
+*.sublime-workspace
+*.sublime-project
+
+# -----------------------------------------------------------------------------
+# Source Control
+# -----------------------------------------------------------------------------
+.git
+.gitignore
+.gitattributes
+.github
+.gitlab-ci.yml
+.travis.yml
+azure-pipelines.yml
+
+# -----------------------------------------------------------------------------
+# Documentation
+# -----------------------------------------------------------------------------
+docs
+*.md
+!README.md
+CHANGELOG.md
+CONTRIBUTING.md
+LICENSE
+LICENSE.md
+CODE_OF_CONDUCT.md
+
+# -----------------------------------------------------------------------------
+# Environment & Configuration (secrets)
+# -----------------------------------------------------------------------------
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env.*.local
+*.env
+config/local.*
+
+# -----------------------------------------------------------------------------
+# Docker Files (prevent recursive copy)
+# -----------------------------------------------------------------------------
+Dockerfile*
+docker-compose*
+.docker
+.dockerignore
+
+# -----------------------------------------------------------------------------
+# Infrastructure & Deployment
+# -----------------------------------------------------------------------------
+deploy
+kubernetes
+k8s
+helm
+terraform
+ansible
+nginx
+grafana
+prometheus
+redis
+
+# -----------------------------------------------------------------------------
+# Logs & Temporary Files
+# -----------------------------------------------------------------------------
+logs
+*.log
+tmp
+temp
+.tmp
+.temp
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.bak
+*.backup
+*.tmp
+*.temp
+
+# -----------------------------------------------------------------------------
+# OS Generated Files
+# -----------------------------------------------------------------------------
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+*.lnk
+
+# -----------------------------------------------------------------------------
+# Security & Secrets
+# -----------------------------------------------------------------------------
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+secrets
+.secrets
+credentials
+*.credentials
+
+# -----------------------------------------------------------------------------
+# Database Files
+# -----------------------------------------------------------------------------
+*.db
+*.sqlite
+*.sqlite3
+prisma/*.db
+prisma/*.db-journal
+db/*.sqlite
+db/*.sqlite3
+
+# -----------------------------------------------------------------------------
+# Prisma (regenerated in container)
+# -----------------------------------------------------------------------------
+prisma/migrations/development
+
+# -----------------------------------------------------------------------------
+# Misc Development Files
+# -----------------------------------------------------------------------------
+.eslintrc*
+.prettierrc*
+.stylelintrc*
+.editorconfig
+.babelrc
+tsconfig.json
+tsconfig.*.json
+next-env.d.ts
+vercel.json
+now.json
+netlify.toml
+firebase.json
+apphosting.yaml
+
+# -----------------------------------------------------------------------------
+# Assets that shouldn't be in build context
+# -----------------------------------------------------------------------------
+uploads
+media
+static/uploads
+public/uploads
+*.mp4
+*.mov
+*.avi
+*.mkv
+large-files
+
+# -----------------------------------------------------------------------------
+# CI/CD
+# -----------------------------------------------------------------------------
+.circleci
+.jenkins
+.github/workflows
+.gitlab-ci
+codecov.yml
+coveralls.yml
+
+# -----------------------------------------------------------------------------
+# Package Manager Files
+# -----------------------------------------------------------------------------
+yarn.lock
+package-lock.json
+pnpm-lock.yaml
+bun.lockb
+
+# -----------------------------------------------------------------------------
+# Miscellaneous
+# -----------------------------------------------------------------------------
+Makefile
+Procfile
+docker-compose.override.yml
+docker-compose.dev.yml
+docker-compose.prod.yml
+scripts/dev-*.sh
+scripts/test-*.sh
