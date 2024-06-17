@@ -1,0 +1,126 @@
+# =============================================================================
+# SSM-Pay Payment Platform - Grafana Datasource Provisioning
+# =============================================================================
+# Automatic datasource configuration for Grafana.
+# This file is loaded at startup and configures Prometheus as the primary
+# metrics datasource for all dashboards.
+#
+# Documentation: https://grafana.com/docs/grafana/latest/administration/provisioning/
+# =============================================================================
+
+# API Version for provisioning configuration
+apiVersion: 1
+
+# List of datasources to provision
+datasources:
+  # ---------------------------------------------------------------------------
+  # Primary: Prometheus - Metrics Collection
+  # ---------------------------------------------------------------------------
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    uid: Prometheus
+    editable: false
+    jsonData:
+      # Time interval for queries
+      timeInterval: "15s"
+      # HTTP method (GET or POST)
+      httpMethod: POST
+      # Query timeout in seconds
+      queryTimeout: 60s      # Enable exemplars for distributed tracing
+      exemplarTraceIdDestinations:
+        - name: traceID
+          url: http://jaeger:16686/traceID
+      # Manage alerting rules from Grafana
+      manageAlerts: true
+      # Prometheus type features
+      prometheusType: Prometheus
+      # Cache TTL (seconds)
+      cacheLevel: 'Low'
+    secureJsonData: {}
+    version: 1
+
+  # ---------------------------------------------------------------------------
+  # Optional: Loki - Log Aggregation
+  # Uncomment when Loki is available
+  # ---------------------------------------------------------------------------
+  # - name: Loki
+  #   type: loki
+  #   access: proxy
+  #   url: http://loki:3100
+  #   isDefault: false
+  #   uid: Loki
+  #   editable: false
+  #   jsonData:
+  #     maxLines: 1000
+  #     derivedFields:
+  #       - name: TraceID
+  #         matcherRegex: '"traceId":"(\w+)"'
+  #         url: http://jaeger:16686/trace/$1
+  #         datasourceUid: Jaeger
+  #   version: 1
+
+  # ---------------------------------------------------------------------------
+  # Optional: PostgreSQL - Direct Database Queries
+  # Uncomment for SQL-based dashboards
+  # ---------------------------------------------------------------------------
+  # - name: PostgreSQL
+  #   type: postgres
+  #   access: proxy
+  #   url: postgres:5432
+  #   database: ssm_pay
+  #   user: ${POSTGRES_USER:-postgres}
+  #   isDefault: false
+  #   uid: PostgreSQL
+  #   editable: false
+  #   jsonData:
+  #     sslmode: disable
+  #     maxOpenConns: 10
+  #     maxIdleConds: 5
+  #     connMaxLifetime: 14400
+  #   secureJsonData:
+  #     password: ${POSTGRES_PASSWORD:-postgres}
+  #   version: 1
+
+  # ---------------------------------------------------------------------------
+  # Optional: Redis - RedisInsight Datasource
+  # Uncomment for Redis monitoring dashboards
+  # ---------------------------------------------------------------------------
+  # - name: Redis
+  #   type: redis-datasource
+  #   access: proxy
+  #   url: redis:6379
+  #   isDefault: false
+  #   uid: Redis
+  #   editable: false
+  #   jsonData:
+  #     poolSize: 5
+  #     timeout: 10
+  #     pingInterval: 30
+  #     pipelineWindow: 0
+  #   secureJsonData:
+  #     password: ${REDIS_PASSWORD:-}
+  #   version: 1
+
+  # ---------------------------------------------------------------------------
+  # Optional: Jaeger - Distributed Tracing
+  # Uncomment when Jaeger is available
+  # ---------------------------------------------------------------------------
+  # - name: Jaeger
+  #   type: jaeger
+  #   access: proxy
+  #   url: http://jaeger:16686
+  #   isDefault: false
+  #   uid: Jaeger
+  #   editable: false
+  #   jsonData:
+  #     tracesToLogsV2:
+  #       customQuery: true
+  #       query: 'job="${__span.tags.job}" | json | line_format "{{.message}}"'
+  #       datasourceUid: Loki
+  #   version: 1
+
+# Delete datasources not defined in this file
+deleteDatasources: []

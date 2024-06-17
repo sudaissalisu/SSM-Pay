@@ -1,0 +1,247 @@
+# =============================================================================
+# SSM-Pay Payment Platform - Prometheus Configuration
+# =============================================================================
+# Comprehensive monitoring configuration for:
+# - Application metrics (Next.js/Node.js)
+# - Redis metrics
+# - PostgreSQL metrics
+# - System infrastructure metrics
+#
+# Scrape intervals and alerting rules optimized for payment platform requirements.
+# =============================================================================
+
+# Global configuration applied to all scrape jobs
+global:
+  # Default scrape interval for all jobs
+  scrape_interval: 15s
+  
+  # Timeout for each scrape operation
+  scrape_timeout: 10s
+  
+  # How long to evaluate rules
+  evaluation_interval: 15s
+  
+  # External labels applied to all data
+  external_labels:
+    environment: production
+    service: ssm-pay
+    team: platform
+
+# Rule files for alerting and recording rules
+rule_files:
+  - /etc/prometheus/alert_rules.yml
+
+# Alertmanager configuration (for sending alerts)
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            # - alertmanager:9093
+          labels:
+            environment: production
+
+# =============================================================================
+# Scrape Configurations
+# =============================================================================
+scrape_configs:
+
+  # ---------------------------------------------------------------------------
+  # Prometheus self-monitoring
+  # ---------------------------------------------------------------------------
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+    scrape_interval: 15s
+    metrics_path: /metrics
+    sample_limit: 10000
+
+  # ---------------------------------------------------------------------------
+  # SSM-Pay Application Metrics
+  # Exposes custom business metrics from Next.js application
+  # ---------------------------------------------------------------------------
+  - job_name: 'ssm-pay-app'
+    static_configs:
+      - targets: ['app:3000']
+        labels:
+          service: ssm-pay
+          component: application
+          environment: production
+    scrape_interval: 10s
+    scrape_timeout: 8s
+    metrics_path: /api/metrics
+    sample_limit: 50000
+    
+    # Retry configuration for failed scrapes
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: 'ssm-pay-primary'
+    
+    # HTTP configuration with timeout
+    scheme: http
+    
+    # Custom headers if authentication required
+    # bearer_token: ${PROMETHEUS_BEARER_TOKEN}
+
+  # ---------------------------------------------------------------------------
+  # Redis Exporter Metrics
+  # Monitors Redis performance, memory, and connection stats
+  # ---------------------------------------------------------------------------
+  - job_name: 'redis'
+    static_configs:
+      - targets: ['redis:6379']
+        labels:
+          service: redis
+          component: cache
+          environment: production
+    scrape_interval: 15s
+    metrics_path: /metrics
+    
+    # If using Redis exporter instead of direct Redis
+    # - job_name: 'redis-exporter'
+    #   static_configs:
+    #     - targets: ['redis-exporter:9121']
+
+  # ---------------------------------------------------------------------------
+  # PostgreSQL Exporter Metrics
+  # Monitors database performance, connections, and query stats
+  # ---------------------------------------------------------------------------
+  - job_name: 'postgres'
+    static_configs:
+      - targets: ['postgres:5432']
+        labels:
+          service: postgresql
+          component: database
+          environment: production
+    scrape_interval: 30s
+    # Note: Requires postgres_exporter sidecar or separate deployment
+
+  # ---------------------------------------------------------------------------
+  # Node Exporter - System Metrics
+  # CPU, Memory, Disk, Network metrics for all hosts
+  # ---------------------------------------------------------------------------
+  - job_name: 'node-exporter'
+    static_configs:
+      - targets: 
+          # Add node exporter targets here
+          # - node-exporter:9100
+        labels:
+          component: infrastructure
+          environment: production
+    scrape_interval: 15s
+    metrics_path: /metrics
+
+  # ---------------------------------------------------------------------------
+  # Nginx Exporter - Web Server Metrics
+  # Request rates, response codes, latency
+  # ---------------------------------------------------------------------------
+  - job_name: 'nginx-exporter'
+    static_configs:
+      - targets:
+          # - nginx-exporter:9113
+        labels:
+          service: nginx
+          component: reverse-proxy
+          environment: production
+    scrape_interval: 15s
+    metrics_path: /metrics
+
+  # ---------------------------------------------------------------------------
+  # Grafana Self-Monitoring
+  # ---------------------------------------------------------------------------
+  - job_name: 'grafana'
+    static_configs:
+      - targets: ['grafana:3000']
+        labels:
+          service: grafana
+          component: visualization
+          environment: production
+    scrape_interval: 30s
+    metrics_path: /metrics
+
+  # ---------------------------------------------------------------------------
+  # Custom Business Metrics Job
+  # Payment-specific metrics scraped from dedicated endpoint
+  # ---------------------------------------------------------------------------
+  - job_name: 'payment-metrics'
+    static_configs:
+      - targets: ['app:3000']
+        labels:
+          service: ssm-pay
+          component: payments
+          environment: production
+    scrape_interval: 5s
+    scrape_timeout: 4s
+    metrics_path: /api/payments/metrics
+    sample_limit: 100000
+    
+    # Metric relabeling for custom processing
+    metric_relabel_configs:
+      # Drop high-cardinality metrics that could cause issues
+      - source_labels: [__name__]
+        regex: 'go_.*|process_.*'
+        action: drop
+
+  # ---------------------------------------------------------------------------
+  # Blackbox Probe - Endpoint Availability
+  # Probes external endpoints for uptime monitoring
+  # ---------------------------------------------------------------------------
+  - job_name: 'blackbox-http'
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    static_configs:
+      - targets:
+          - http://app:3000/api/health
+          - http://app:3000/
+        labels:
+          service: ssm-pay
+          probe: availability
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - target_label: __address__
+        replacement: blackbox-exporter:9115
+
+  # -----------------------------------------------------------------------------
+# Remote Write Configuration (for long-term storage)
+# Uncomment to send data to external systems like Cortex, Thanos, or VictoriaMetrics
+# -----------------------------------------------------------------------------
+# remote_write:
+#   - url: https://cortex.example.com/api/v1/write
+#     remote_timeout: 30s
+#     queue_config:
+#       max_samples_per_send: 1000
+#       max_shards: 200
+#       capacity: 2500
+#       batch_send_deadline: 5s
+#     write_relabel_configs:
+#       - source_labels: [__name__]
+#         regex: 'go_.*|prometheus_.*'
+#         action: drop
+
+# -----------------------------------------------------------------------------
+# Remote Read Configuration (for querying historical data)
+# -----------------------------------------------------------------------------
+# remote_read:
+#   - url: https://cortex.example.com/api/v1/read
+#     remote_timeout: 60s
+#     read_recent: true
+
+# =============================================================================
+# Storage Configuration Notes
+# =============================================================================
+# Storage settings are passed via command line arguments in docker-compose:
+# --storage.tsdb.retention.time=30d
+# --storage.tsdb.retention.size=10GB
+# --storage.tsdb.wal-compression=true
+# =============================================================================
+
+# =============================================================================
+# Tracing Configuration (Optional)
+# =============================================================================
+# Enable tracing to debug scraping issues
+# tracing:
+#   endpoint: "otel-collector:4317"
+#   sample_rate: 0.001
+#   insecure: true

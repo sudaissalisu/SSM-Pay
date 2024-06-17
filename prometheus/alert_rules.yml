@@ -1,0 +1,421 @@
+# =============================================================================
+# SSM-Pay Payment Platform - Prometheus Alert Rules
+# =============================================================================
+# Comprehensive alerting rules for payment platform monitoring:
+# - Application health and error rate alerts
+# - Payment transaction monitoring
+# - Latency and performance alerts
+# - Infrastructure resource alerts
+# - Security and anomaly detection
+#
+# Alert severity levels:
+# - critical: Immediate action required, service down or data loss risk
+# - warning: Attention needed, degraded performance or approaching limits
+# - info: Informational, potential optimization opportunities
+# =============================================================================
+
+groups:
+  # ===========================================================================
+  # Group 1: Application Health Alerts
+  # ===========================================================================
+  - name: ssm-pay-application-health
+    interval: 30s
+    rules:
+      # -----------------------------------------------------------------------
+      # Application Down Alert
+      # -----------------------------------------------------------------------
+      - alert: SsmPayApplicationDown
+        expr: up{job="ssm-pay-app"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          team: platform
+          pagerduty: ssm-pay-critical
+        annotations:
+          summary: "SSM-Pay application is down"
+          description: >
+            SSM-Pay application instance {{ $labels.instance }} has been 
+            down for more than 1 minute. Immediate investigation required.
+          runbook_url: "https://wiki.example.com/runbooks/app-down"
+
+      # -----------------------------------------------------------------------
+      # High Error Rate Alert (5xx errors)
+      # -----------------------------------------------------------------------
+      - alert: SsmPayHighErrorRate
+        expr: |
+          (
+            sum(rate(http_requests_total{status=~"5..", job="ssm-pay-app"}[5m]))
+            /
+            sum(rate(http_requests_total{job="ssm-pay-app"}[5m]))
+          ) * 100 > 5
+        for: 5m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "High error rate detected in SSM-Pay"
+          description: >
+            Error rate is {{ printf "%.2f" $value }}% (threshold: 5%) over 
+            the last 5 minutes. This indicates significant issues with the 
+            payment processing system.
+          dashboard_url: "http://grafana:3001/d/payment-dashboard"
+
+      # -----------------------------------------------------------------------
+      # Elevated 4xx Client Errors
+      # -----------------------------------------------------------------------
+      - alert: SsmPayClientErrorRate
+        expr: |
+          (
+            sum(rate(http_requests_total{status=~"4..", job="ssm-pay-app"}[5m]))
+            /
+            sum(rate(http_requests_total{job="ssm-pay-app"}[5m]))
+          ) * 100 > 15
+        for: 10m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "Elevated client error rate"
+          description: >
+            Client error rate (4xx) is {{ printf "%.2f" $value }}% 
+            (threshold: 15%). This may indicate API misuse or integration issues.
+
+  # ===========================================================================
+  # Group 2: Performance & Latency Alerts
+  # ===========================================================================
+  - name: ssm-pay-performance
+    interval: 30s
+    rules:
+      # -----------------------------------------------------------------------
+      # High P99 Latency Alert
+      # -----------------------------------------------------------------------
+      - alert: SsmPayHighLatencyP99
+        expr: |
+          histogram_quantile(0.99, 
+            sum(rate(http_request_duration_seconds_bucket{job="ssm-pay-app"}[5m])) by (le)
+          ) > 2
+        for: 5m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "SSM-Pay P99 latency is too high"
+          description: >
+            P99 response latency is {{ printf "%.2f" $value }}s 
+            (threshold: 2s). Users are experiencing slow responses.
+
+      # -----------------------------------------------------------------------
+      # High P95 Latency Alert
+      # -----------------------------------------------------------------------
+      - alert: SsmPayHighLatencyP95
+        expr: |
+          histogram_quantile(0.95, 
+            sum(rate(http_request_duration_seconds_bucket{job="ssm-pay-app"}[5m])) by (le)
+          ) > 1
+        for: 10m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "SSM-Pay P95 latency elevated"
+          description: >
+            P95 response latency is {{ printf "%.2f" $value }}s 
+            (threshold: 1s). Performance degradation detected.
+
+      # -----------------------------------------------------------------------
+      # High Average Response Time
+      # -----------------------------------------------------------------------
+      - alert: SsmPayHighAvgResponseTime
+        expr: |
+          sum(rate(http_request_duration_seconds_sum{job="ssm-pay-app"}[5m])) 
+          / sum(rate(http_request_duration_seconds_count{job="ssm-pay-app"}[5m])) > 0.5
+        for: 10m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "Average response time is high"
+          description: >
+            Average response time is {{ printf "%.3f" $value }}s 
+            (threshold: 0.5s). Investigate slow endpoints.
+
+  # ===========================================================================
+  # Group 3: Payment Transaction Alerts
+  # ===========================================================================
+  - name: ssm-pay-transactions
+    interval: 15s
+    rules:
+      # -----------------------------------------------------------------------
+      # Transaction Failure Rate Alert
+      # -----------------------------------------------------------------------
+      - alert: SsmPayTransactionFailureRate
+        expr: |
+          (
+            sum(rate(payment_transactions_total{status="failed"}[5m]))
+            /
+            sum(rate(payment_transactions_total[5m]))
+          ) * 100 > 10
+        for: 3m
+        labels:
+          severity: critical
+          team: payments
+          pagerduty: ssm-payments-critical
+        annotations:
+          summary: "Payment transaction failure rate is critical"
+          description: >
+            Transaction failure rate is {{ printf "%.2f" $value }}% 
+            (threshold: 10%). Payment processing may be severely impacted.
+            Check gateway connectivity and error logs immediately.
+
+      # -----------------------------------------------------------------------
+      # Low Transaction Success Rate
+      # -----------------------------------------------------------------------
+      - alert: SsmPayLowTransactionSuccessRate
+        expr: |
+          (
+            sum(rate(payment_transactions_total{status="success"}[10m]))
+            /
+            sum(rate(payment_transactions_total[10m]))
+          ) * 100 < 90
+        for: 5m
+        labels:
+          severity: warning
+          team: payments
+        annotations:
+          summary: "Transaction success rate below target"
+          description: >
+            Transaction success rate is {{ printf "%.2f" $value }}% 
+            (target: 95%). Investigate failed transactions.
+
+      # -----------------------------------------------------------------------
+      # Unusual Drop in Transaction Volume
+      # -----------------------------------------------------------------------
+      - alert: SsmPayTransactionVolumeDrop
+        expr: |
+          (
+            sum(rate(payment_transactions_total[15m])) 
+            / 
+            sum(rate(payment_transactions_total[1h] offset 45m))
+          ) < 0.3
+        for: 15m
+        labels:
+          severity: warning
+          team: payments
+        annotations:
+          summary: "Significant drop in transaction volume"
+          description: >
+            Current transaction volume is only {{ printf "%.0f" $value | mul 100 }}%
+            of the volume from 1 hour ago. Possible issue with payment intake.
+
+      # -----------------------------------------------------------------------
+      # Pending Transactions Backlog
+      # -----------------------------------------------------------------------
+      - alert: SsmPayPendingTransactionsBacklog
+        expr: payment_transactions_pending > 1000
+        for: 10m
+        labels:
+          severity: warning
+          team: payments
+        annotations:
+          summary: "High number of pending transactions"
+          description: >
+            There are {{ $value }} pending transactions waiting to be processed.
+            This may indicate a processing bottleneck.
+
+  # ===========================================================================
+  # Group 4: Resource Utilization Alerts
+  # ===========================================================================
+  - name: ssm-pay-resources
+    interval: 60s
+    rules:
+      # -----------------------------------------------------------------------
+      # High Memory Usage
+      # -----------------------------------------------------------------------
+      - alert: SsmPayHighMemoryUsage
+        expr: |
+          (process_resident_memory_bytes{job="ssm-pay-app"} / 2147483648) * 100 > 85
+        for: 10m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "SSM-Pay memory usage is high"
+          description: >
+            Memory usage is at {{ printf "%.1f" $value }}% of limit (2GB).
+            Consider scaling up or investigating memory leaks.
+
+      # -----------------------------------------------------------------------
+      # Critical Memory Usage
+      # -----------------------------------------------------------------------
+      - alert: SsmPayCriticalMemoryUsage
+        expr: |
+          (process_resident_memory_bytes{job="ssm-pay-app"} / 2147483648) * 100 > 95
+        for: 5m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "SSM-Pay memory usage is critical"
+          description: >
+            Memory usage is at {{ printf "%.1f" $value }}% of limit (2GB).
+            Risk of OOM kill. Immediate action required.
+
+      # -----------------------------------------------------------------------
+      # High CPU Usage
+      # -----------------------------------------------------------------------
+      - alert: SsmPayHighCPUUsage
+        expr: |
+          100 - (avg by(instance) (irate(node_cpu_seconds_total{mode="idle", job="node-exporter"}[5m])) * 100) > 80
+        for: 15m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "Server CPU usage is high"
+          description: >
+            CPU usage is at {{ printf "%.1f" $value }}%. 
+            Investigate CPU-intensive operations.
+
+      # -----------------------------------------------------------------------
+      # Redis Memory High
+      # -----------------------------------------------------------------------
+      - alert: SsmPayRedisMemoryHigh
+        expr: redis_memory_used_bytes / redis_memory_max_bytes * 100 > 85
+        for: 10m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "Redis memory usage is high"
+          description: >
+            Redis memory usage is at {{ printf "%.1f" $value }}%.
+            Review eviction policy and consider scaling.
+
+      # -----------------------------------------------------------------------
+      # Disk Space Warning
+      # -----------------------------------------------------------------------
+      - alert: SsmPayDiskSpaceWarning
+        expr: |
+          (1 - node_filesystem_avail_bytes{fstype!~"tmpfs|overlay", mountpoint="/"} 
+           / node_filesystem_size_bytes{fstype!~"tmpfs|overlay", mountpoint="/"}) * 100 > 80
+        for: 15m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "Disk space running low"
+          description: >
+            Disk usage is at {{ printf "%.1f" $value }}%.
+            Plan for capacity expansion or cleanup.
+
+  # ===========================================================================
+  # Group 5: Security & Anomaly Alerts
+  # ===========================================================================
+  - name: ssm-pay-security
+    interval: 30s
+    rules:
+      # -----------------------------------------------------------------------
+      # Suspicious Activity - Rate Limit Breaches
+      # -----------------------------------------------------------------------
+      - alert: SsmPaySuspiciousActivity
+        expr: |
+          sum(increase(rate_limiter_blocked_total[5m])) > 50
+        for: 5m
+        labels:
+          severity: warning
+          team: security
+        annotations:
+          summary: "High rate of blocked requests detected"
+          description: >
+            {{ $value }} requests have been blocked by rate limiter 
+            in the last 5 minutes. Possible attack or abuse.
+
+      # -----------------------------------------------------------------------
+      # Authentication Failures Spike
+      # -----------------------------------------------------------------------
+      - alert: SsmPayAuthFailureSpike
+        expr: |
+          sum(rate(auth_failures_total[5m])) > 20
+        for: 5m
+        labels:
+          severity: warning
+          team: security
+        annotations:
+          summary: "Authentication failure spike detected"
+          description: >
+            Authentication failures are occurring at {{ printf "%.1f" $value }}/second.
+            Possible brute force attack attempt.
+
+      # -----------------------------------------------------------------------
+      # Large Transaction Amount Alert
+      # -----------------------------------------------------------------------
+      - alert: SsmPayLargeTransactionDetected
+        expr: payment_transaction_amount > 10000000
+        for: 0m
+        labels:
+          severity: info
+          team: compliance
+        annotations:
+          summary: "Large transaction amount detected"
+          description: >
+            A transaction of ₦{{ $value | humanize1024 }} was initiated.
+            Verify this is legitimate and within policy limits.
+
+  # ===========================================================================
+  # Group 6: Availability & Uptime Alerts
+  # ===========================================================================
+  - name: ssm-pay-availability
+    interval: 60s
+    rules:
+      # -----------------------------------------------------------------------
+      # Health Check Failure
+      # -----------------------------------------------------------------------
+      - alert: SsmPayHealthCheckFailing
+        expr: probe_success == 0
+        for: 2m
+        labels:
+          severity: critical
+          team: platform
+          pagerduty: ssm-pay-critical
+        annotations:
+          summary: "Health check failing for {{ $labels.instance }}"
+          description: >
+            Health check probe has been failing for {{ $labels.instance }} 
+            for more than 2 minutes.
+
+      # -----------------------------------------------------------------------
+      # SSL Certificate Expiring Soon
+      # -----------------------------------------------------------------------
+      - alert: SsmPaySSLExpiringSoon
+        expr: |
+          probe_ssl_earliest_cert_expiry - time() < 86400 * 7
+        for: 1h
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "SSL certificate expiring soon"
+          description: >
+            SSL certificate for {{ $labels.instance }} will expire 
+            in {{ printf "%.0f" $value }} days. Renew immediately.
+
+      # -----------------------------------------------------------------------
+      # Service Degradation
+      # -----------------------------------------------------------------------
+      - alert: SsmPayServiceDegraded
+        expr: |
+          up{job="ssm-pay-app"} == 1 AND 
+          (
+            sum(rate(http_requests_total{status=~"5..", job="ssm-pay-app"}[5m]))
+            /
+            sum(rate(http_requests_total{job="ssm-pay-app"}[5m]))
+          ) * 100 > 1
+        for: 10m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "SSM-Pay service degraded"
+          description: >
+            Service is up but experiencing elevated errors 
+            ({{ printf "%.2f" $value }}%). Performance may be impacted.
