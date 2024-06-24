@@ -1,0 +1,302 @@
+# =============================================================================
+# SSM-Pay Payment Platform - Kubernetes ConfigMap
+# =============================================================================
+# Configuration management for:
+# - Application environment variables
+# - Feature flags
+# - Service discovery settings
+# - Logging and monitoring configuration
+#
+# Note: Sensitive data (passwords, API keys) should be stored in Kubernetes Secrets
+#
+# Usage:
+#   kubectl apply -f configmap.yaml
+#   kubectl get configmap ssm-pay-config -o yaml
+# =============================================================================
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ssm-pay-config
+  namespace: default
+  labels:
+    app: ssm-pay
+    component: configuration
+    team: platform
+    environment: production
+  annotations:
+    description: "SSM-Pay Application Configuration"
+data:
+  # ==========================================================================
+  # Application Settings
+  # ==========================================================================
+  
+  # Node.js environment
+  NODE_ENV: "production"
+  
+  # Server configuration
+  PORT: "3000"
+  HOSTNAME: "0.0.0.0"
+  
+  # Disable telemetry for privacy and performance
+  NEXT_TELEMETRY_DISABLED: "true"
+  
+  # Base URL for the application
+  NEXTAUTH_URL: "https://ssm-pay.com"
+  SERVER_URL: "https://ssm-pay.com"
+
+  # ==========================================================================
+  # Database Configuration
+  # ==========================================================================
+  
+  # PostgreSQL connection string (host will be resolved via DNS)
+  DATABASE_HOST: "ssm-pay-postgres"
+  DATABASE_PORT: "5432"
+  DATABASE_USER: "postgres"
+  DATABASE_NAME: "ssm_pay"
+  # Full connection string (constructed from above or override here)
+  DATABASE_URL: "postgresql://postgres:postgres@ssm-pay-postgres:5432/ssm_pay?schema=public&connect_timeout=10&pool_timeout=30"
+  
+  # Database pool settings
+  DB_POOL_MIN: "2"
+  DB_POOL_MAX: "20"
+  DB_IDLE_TIMEOUT: "30000"
+  DB_CONNECTION_TIMEOUT: "10000"
+
+  # ==========================================================================
+  # Redis Configuration
+  # ==========================================================================
+  
+  # Redis connection settings
+  REDIS_URL: "redis://ssm-pay-redis:6379"
+  REDIS_HOST: "ssm-pay-redis"
+  REDIS_PORT: "6379"
+  
+  # Cache configuration
+  REDIS_CACHE_TTL: "3600"           # Default cache TTL in seconds (1 hour)
+  REDIS_SESSION_TTL: "86400"        # Session TTL in seconds (24 hours)
+  REDIS_RATE_LIMIT_TTL: "60"        # Rate limit window in seconds
+  
+  # Redis cluster mode (enable if using Redis Cluster)
+  REDIS_CLUSTER_MODE: "false"
+
+  # ==========================================================================
+  # Security & Authentication
+  # ==========================================================================
+  
+  # Session configuration
+  SESSION_SECRET_PLACEHOLDER: "CHANGE_IN_PRODUCTION_USE_K8S_SECRET"
+  
+  # Cookie settings
+  COOKIE_NAME: "ssm-pay-session"
+  COOKIE_SECURE: "true"
+  COOKIE_SAME_SITE: "lax"
+  COOKIE_DOMAIN: ".ssm-pay.com"
+  
+  # CORS configuration
+  CORS_ORIGIN: "https://ssm-pay.com,https://www.ssm-pay.com"
+  CORS_METHODS: "GET,POST,PUT,PATCH,DELETE,OPTIONS"
+  CORS_HEADERS: "Authorization,Content-Type,X-Requested-With,X-Request-ID,X-Correlation-ID"
+  CORS_CREDENTIALS: "true"
+  
+  # CSRF protection
+  CSRF_ENABLED: "true"
+
+  # ==========================================================================
+  # Rate Limiting Configuration
+  # ==========================================================================
+  
+  ENABLE_RATE_LIMITING: "true"
+  RATE_LIMIT_WINDOW_MS: "60000"         # Window size in milliseconds (1 minute)
+  RATE_LIMIT_MAX_REQUESTS: "100"        # Max requests per window (general)
+  RATE_LIMIT_API_MAX_REQUESTS: "50"     # Max requests for API endpoints
+  RATE_LIMIT_AUTH_MAX_REQUESTS: "10"    # Max requests for auth endpoints
+  RATE_LIMIT_PAYMENT_MAX_REQUESTS: "20" # Max requests for payment endpoints
+  
+  # Whitelisted IPs (comma-separated, empty = no whitelist)
+  RATE_LIMIT_WHITELIST_IPS: ""
+
+  # ==========================================================================
+  # Payment Gateway Configuration (ZainPay)
+  # ==========================================================================
+  
+  ZAINPAY_BASE_URL: "https://api.zainpay.ng"
+  ZAINPAY_API_VERSION: "v1"
+  ZAINPAY_TIMEOUT: "30000"              # Request timeout in milliseconds
+  ZAINPAY_RETRY_ATTEMPTS: "3"
+  
+  # Webhook configuration
+  WEBHOOK_SECRET_PLACEHOLDER: "CHANGE_IN_PRODUCTION_USE_K8S_SECRET"
+  WEBHOOK_TIMEOUT: "10000"
+  WEBHOOK_SIGNATURE_HEADER: "X-ZainPay-Signature"
+  
+  # Callback URLs
+  PAYMENT_CALLBACK_URL: "https://api.ssm-pay.com/callback/payment"
+  WEBHOOK_ENDPOINT_URL: "https://api.ssm-pay.com/api/webhooks/zainpay"
+
+  # ==========================================================================
+  # Monitoring & Observability
+  # ==========================================================================
+  
+  # Enable metrics endpoint
+  ENABLE_METRICS: "true"
+  PROMETHEUS_PORT: "9091"
+  METRICS_PATH: "/api/metrics"
+  
+  # Logging configuration
+  LOG_LEVEL: "info"                     # debug, info, warn, error
+  LOG_FORMAT: "json"                    # json or text
+  LOG_PRETTY_PRINT: "false"
+  
+  # Distributed tracing
+  ENABLE_TRACING: "true"
+  TRACING_SAMPLE_RATE: "0.1"            # Sample 10% of requests
+  TRACING_EXPORTER_OTLP_ENDPOINT: "http://jaeger-collector:4317"
+  
+  # Request ID header
+  REQUEST_ID_HEADER: "X-Request-ID"
+  CORRELATION_ID_HEADER: "X-Correlation-ID"
+
+  # ==========================================================================
+  # Feature Flags
+  # ==========================================================================
+  
+  # Enable/disable features without redeployment
+  FEATURE_MAINTENANCE_MODE: "false"
+  FEATURE_NEW_UI: "true"
+  FEATURE_BULK_PAYMENTS: "true"
+  FEATURE_RECURRING_PAYMENTS: "false"
+  FEATURE_ANALYTICS_DASHBOARD: "true"
+  FEATURE_TWO_FACTOR_AUTH: "true"
+  FEATURE_EMAIL_NOTIFICATIONS: "true"
+  FEATURE_SMS_NOTIFICATIONS: "false"
+  FEATURE_AUDIT_LOGGING: "true"
+  FEATURE_FRAUD_DETECTION: "true"
+  FEATURE_RISK_SCORING: "true"
+
+  # ==========================================================================
+  # Email/SMS Notification Settings
+  # ==========================================================================
+  
+  SMTP_HOST: "smtp.example.com"
+  SMTP_PORT: "587"
+  SMTP_SECURE: "true"
+  SMTP_FROM_NAME: "SSM-Pay"
+  SMTP_FROM_EMAIL: "noreply@ssm-pay.com"
+  
+  SMS_PROVIDER: "twilio"               # twilio, africastalking, etc.
+  SMS_FROM_NUMBER: "+234XXXXXXXXXX"
+
+  # ==========================================================================
+  # File Upload Configuration
+  # ==========================================================================
+  
+  UPLOAD_MAX_SIZE: "10485760"           # 10MB in bytes
+  UPLOAD_ALLOWED_TYPES: "image/jpeg,image/png,image/gif,application/pdf"
+  UPLOAD_STORAGE_TYPE: "local"          # local, s3, gcs, azure-blob
+  
+  # S3 configuration (if using S3 storage)
+  AWS_S3_BUCKET: ""
+  AWS_S3_REGION: ""
+  AWS_S3_ACL: "private"
+
+  # ==========================================================================
+  # Timezone & Locale
+  # ==========================================================================
+  
+  TZ: "Africa/Lagos"
+  DEFAULT_LOCALE: "en-NG"
+  DEFAULT_CURRENCY: "NGN"
+  DATE_FORMAT: "YYYY-MM-DDTHH:mm:ssZ"
+
+# =============================================================================
+# Additional ConfigMap for Nginx Configuration (if needed)
+# =============================================================================
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ssm-pay-nginx-config
+  namespace: default
+  labels:
+    app: ssm-pay
+    component: nginx-config
+data:
+  nginx.conf: |
+    # This would contain the full nginx configuration
+    # For simplicity, we use a separate volume mount in most cases
+    
+# =============================================================================
+# ConfigMap for Prometheus Annotations Helper
+# =============================================================================
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ssm-pay-prometheus-rules
+  namespace: default
+  labels:
+    app: ssm-pay
+    component: prometheus-rules
+  annotations:
+    prometheus.io/scrape: "true"
+data:
+  rules.yml: |
+    # Custom recording rules for SSM-Pay
+    groups:
+      - name: ssm-pay-recording
+        interval: 30s
+        rules:
+          # Record request rate
+          - record: ssm_pay:http_requests:rate5m
+            expr: sum(rate(http_requests_total{job="ssm-pay-app"}[5m])) by (method, path)
+          
+          # Record error rate
+          - record: ssm_pay:error_rate:5m
+            expr: |
+              sum(rate(http_requests_total{status=~"5..", job="ssm-pay-app"}[5m]))
+              / sum(rate(http_requests_total{job="ssm-pay-app"}[5m]))
+          
+          # Record P95 latency
+          - record: ssm_pay:latency_p95:5m
+            expr: |
+              histogram_quantile(0.95,
+                sum(rate(http_request_duration_seconds_bucket{job="ssm-pay-app"}[5m])) by (le))
+          
+          # Record transaction rate by status
+          - record: ssm_pay:transactions:rate5m
+            expr: sum(rate(payment_transactions_total[5m])) by (status)
+
+# =============================================================================
+# Secret Reference Template
+# Create actual secrets with: kubectl create secret generic ssm-pay-secrets \
+#   --from-literal=JWT_SECRET=your-secret \
+#   --from-literal=NEXTAUTH_SECRET=your-secret \
+#   --from-literal=DATABASE_PASSWORD=your-password \
+#   --from-literal=REDIS_PASSWORD=your-password \
+#   --from-literal=ZAINPAY_API_KEY=your-api-key \
+#   --from-literal=ZAINPAY_PUBLIC_KEY=your-public-key \
+#   --from-literal=WEBHOOK_SECRET=your-webhook-secret
+# =============================================================================
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: ssm-pay-secrets
+  namespace: default
+  labels:
+    app: ssm-pay
+    component: secrets
+type: Opaque
+# Data should be base64 encoded
+# stringData can be used for plain text (Kubernetes will encode automatically)
+stringData:
+  JWT_SECRET: "CHANGE_ME_IN_PRODUCTION_SUPER_SECRET_JWT_KEY_32_CHARS"
+  NEXTAUTH_SECRET: "CHANGE_ME_IN_PRODUCTION_NEXTAUTH_SECRET_MIN_32_CHARS"
+  DATABASE_PASSWORD: "CHANGE_ME_IN_PRODUCTION_DB_PASSWORD"
+  REDIS_PASSWORD: ""
+  ZAINPAY_API_KEY: "CHANGE_ME_ZAINPAY_API_KEY"
+  ZAINPAY_PUBLIC_KEY: "CHANGE_ME_ZAINPAY_PUBLIC_KEY"
+  WEBHOOK_SECRET: "CHANGE_ME_WEBHOOK_SECRET_FOR_VERIFICATION"
+  SESSION_SECRET: "CHANGE_ME_SESSION_SECRET_MIN_32_CHARS"
+  ENCRYPTION_KEY: "CHANGE_ME_ENCRYPTION_KEY_32_BYTES_LONG"

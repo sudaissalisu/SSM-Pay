@@ -1,0 +1,285 @@
+# =============================================================================
+# SSM-Pay Payment Platform - Kubernetes Service Configuration
+# =============================================================================
+# Service definitions for:
+# - Main application service (ClusterIP + NodePort)
+# - Headless service for StatefulSet (if needed)
+# - Metrics service for Prometheus scraping
+#
+# Usage:
+#   kubectl apply -f service.yaml
+#   kubectl get svc ssm-pay-app
+# =============================================================================
+
+# =============================================================================
+# Main Application Service
+# ClusterIP type for internal communication
+# =============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: ssm-pay-app
+  namespace: default
+  labels:
+    app: ssm-pay
+    component: application
+    team: platform
+    environment: production
+  annotations:
+    description: "SSM-Pay Application Service - Internal Load Balancing"
+    # Enable Prometheus service discovery
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "3000"
+    prometheus.io/path: "/api/metrics"
+spec:
+  # Service type options:
+  # - ClusterIP: Internal only (default)
+  # - NodePort: Expose on node port
+  # - LoadBalancer: Cloud load balancer
+  type: ClusterIP
+  
+  # IP family configuration
+  ipFamilies:
+    - IPv4
+  ipFamilyPolicy: SingleStack
+  
+  # Session affinity (None or ClientIP with timeout)
+  sessionAffinity: None
+  
+  # Map external traffic policy
+  # - Cluster: Traffic distributed to all nodes
+  # - Local: Only nodes with healthy pods receive traffic
+  externalTrafficPolicy: Cluster
+  
+  # Port configuration
+  ports:
+    # HTTP/HTTPS traffic port
+    - name: http
+      protocol: TCP
+      port: 80
+      targetPort: http
+      # Optional: NodePort for direct access (30000-32767)
+      # nodePort: 30080
+    
+    # Metrics port for Prometheus
+    - name: metrics
+      protocol: TCP
+      port: 9091
+      targetPort: metrics
+  
+  # Selector to match pods
+  selector:
+    app: ssm-pay
+    component: application
+
+# =============================================================================
+# External Access Service (NodePort)
+# For environments without Ingress controller
+# =============================================================================
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ssm-pay-app-external
+  namespace: default
+  labels:
+    app: ssm-pay
+    component: application-external
+    team: platform
+    environment: production
+  annotations:
+    description: "SSM-Pay External Access Service - NodePort"
+spec:
+  type: NodePort
+  
+  ports:
+    - name: https
+      protocol: TCP
+      port: 443
+      targetPort: http
+      nodePort: 30443
+    
+    - name: http
+      protocol: TCP
+      port: 80
+      targetPort: http
+      nodePort: 30080
+  
+  selector:
+    app: ssm-pay
+    component: application
+
+# =============================================================================
+# Headless Service (for StatefulSets and direct pod access)
+# =============================================================================
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ssm-pay-app-headless
+  namespace: default
+  labels:
+    app: ssm-pay
+    component: headless
+    team: platform
+  annotations:
+    description: "Headless service for direct pod DNS resolution"
+spec:
+  type: ClusterIP
+  clusterIP: None
+  
+  ports:
+    - name: http
+      protocol: TCP
+      port: 3000
+      targetPort: http
+  
+  selector:
+    app: ssm-pay
+    component: application
+
+# =============================================================================
+# Metrics Exporter Service (dedicated for Prometheus)
+# =============================================================================
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ssm-pay-metrics
+  namespace: default
+  labels:
+    app: ssm-pay
+    component: metrics-exporter
+    team: platform
+  annotations:
+    description: "Dedicated metrics endpoint for Prometheus scraping"
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9091"
+    prometheus.io/path: "/api/metrics"
+spec:
+  type: ClusterIP
+  
+  ports:
+    - name: metrics
+      protocol: TCP
+      port: 9091
+      targetPort: 9091
+  
+  selector:
+    app: ssm-pay
+    component: application
+
+# =============================================================================
+# Ingress Configuration (for external access via Ingress Controller)
+# Uncomment and configure based on your Ingress controller (NGINX, Traefik, etc.)
+# =============================================================================
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ssm-pay-ingress
+  namespace: default
+  labels:
+    app: ssm-pay
+    component: ingress
+    team: platform
+  annotations:
+    # NGINX Ingress Controller annotations
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "60"
+    
+    # Rate limiting
+    nginx.ingress.kubernetes.io/limit-rps: "100"
+    nginx.ingress.kubernetes.io/limit-connections: "50"
+    
+    # CORS headers
+    nginx.ingress.kubernetes.io/enable-cors: "true"
+    nginx.ingress.kubernetes.io/cors-allow-origin: "*"
+    nginx.ingress.kubernetes.io/cors-allow-methods: "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+    nginx.ingress.kubernetes.io/cors-allow-headers: "Authorization, Content-Type, X-Requested-With, X-Request-ID"
+    
+    # Sticky sessions (if needed)
+    # nginx.ingress.kubernetes.io/affinity: "cookie"
+    # nginx.ingress.kubernetes.io/session-cookie-name: "route"
+    # nginx.ingress.kubernetes.io/session-cookie-hash: "sha1"
+    
+    # WebSocket support
+    nginx.ingress.kubernetes.io/proxy-http-version: "1.1"
+    nginx.ingress.kubernetes.io/upstream-hash-by: "$remote_addr"
+    
+    # Custom headers
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      more_set_headers "X-Frame-Options: DENY";
+      more_set_headers "X-Content-Type-Options: nosniff";
+      more_set_headers "X-XSS-Protection: 1; mode=block";
+      more_set_headers "Referrer-Policy: strict-origin-when-cross-origin";
+spec:
+  # TLS configuration
+  tls:
+    - hosts:
+        - api.ssm-pay.com
+        - ssm-pay.com
+      secretName: ssm-pay-tls-secret
+  
+  rules:
+    # Main API domain
+    - host: api.ssm-pay.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: ssm-pay-app
+                port:
+                  number: 80
+    
+    # Web application domain
+    - host: ssm-pay.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: ssm-pay-app
+                port:
+                  number: 80
+    
+    # Fallback rule (catch-all)
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: ssm-pay-app
+                port:
+                  number: 80
+
+# =============================================================================
+# Endpoint Slice (for advanced routing scenarios)
+# =============================================================================
+---
+apiVersion: discovery.k8s.io/v1
+kind: EndpointSlice
+metadata:
+  name: ssm-pay-app-endpoints
+  namespace: default
+  labels:
+    app: ssm-pay
+    kubernetes.io/service-name: ssm-pay-app
+addressType: IPv4
+ports:
+  - name: http
+    protocol: TCP
+    port: 3000
+  - name: metrics
+    protocol: TCP
+    port: 9091
+endpoints:
+  # Endpoints are managed automatically by Kubernetes based on pod IPs
+  # This is just a template structure
