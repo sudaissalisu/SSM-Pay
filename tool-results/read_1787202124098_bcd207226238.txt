@@ -1,0 +1,1174 @@
+     1→/**
+     2→ * Enterprise Type Definitions
+     3→ * Comprehensive TypeScript types for the SSM Pay platform
+     4→ * 
+     5→ * @module types/index
+     6→ */
+     7→
+     8→// ============== Payment Types ==============
+     9→
+    10→export interface Payment {
+    11→  id: string;
+    12→  reference: string;
+    13→  amount: number;
+    14→  currency: CurrencyCode;
+    15→  status: PaymentStatus;
+    16→  customer: Customer;
+    17→  method: PaymentMethod;
+    18→  metadata: PaymentMetadata;
+    19→  createdAt: Date;
+    20→  updatedAt: Date;
+    21→  completedAt?: Date;
+    22→  refundedAt?: Date;
+    23→}
+    24→
+    25→export type PaymentStatus =
+    26→  | 'pending'
+    27→  | 'processing'
+    28→  | 'completed'
+    29→  | 'failed'
+    30→  | 'refunded'
+    31→  | 'partially_refunded'
+    32→  | 'expired'
+    33→  | 'cancelled';
+    34→
+    35→export interface PaymentMethod {
+    36→  id: string;
+    37→  type: PaymentMethodType;
+    38→  provider: PaymentProvider;
+    39→  last4Digits?: string;
+    40→  bankName?: string;
+    41→  accountName?: string;
+    42→  walletAddress?: string;
+    43→  ussdNumber?: string;
+    44→  expiryDate?: string;
+    45→  issuer?: string;
+    46→  country?: string;
+    47→  isDefault: boolean;
+    48→  verified: boolean;
+    49→  addedAt: Date;
+    50→}
+    51→
+    52→export type PaymentMethodType = 
+    53→  | 'card'
+    54→  | 'bank_transfer'
+    55→  | 'wallet'
+    56→  | 'ussd'
+    57→  | 'qr_code'
+    58→  | 'pay_with_points';
+    59→
+    60→export type PaymentProvider = 
+    61→  | 'zainpay'
+    62→  | 'flutterwave'
+    63→  | 'paystack'
+    64→  | 'stripe'
+    65→  | 'paypal';
+    66→
+    67→export interface PaymentMetadata {
+    68→  ipAddress: string;
+    69→  userAgent: string;
+    70→  deviceId: string;
+    71→  sessionId: string;
+    72→  fraudScore?: number;
+    73→  riskLevel?: RiskLevel;
+    74→  threeDSecureAuthenticated?: boolean;
+    75→  avsResult?: AVSResult;
+    76→}
+    77→
+    78→export type RiskLevel = 'low' | 'medium' | 'high' | 'critical';
+    79→export type AVSResult = { addressMatch: boolean; zipMatch: boolean; cvvMatch: boolean };
+    80→
+    81→// ============== Customer Types ==============
+    82→
+    83→export interface Customer {
+    84→  id: string;
+    85→  email: string;
+    86→  phone: string;
+    87→  firstName: string;
+    88→  lastName: string;
+    89→  fullName: string;
+    90→  dateOfBirth?: Date;
+    91→  kycLevel: KYCLevel;
+    92→  tier: CustomerTier;
+    93→  status: CustomerStatus;
+    94→  addresses: Address[];
+    95→  paymentMethods: PaymentMethod[];
+    96→  preferences: CustomerPreferences;
+    97→  metadata: CustomerMetadata;
+    98→  createdAt: Date;
+    99→  updatedAt: Date;
+   100→  lastLoginAt?: Date;
+   101→}
+   102→
+   103→export type KYCLevel = 'none' | 'basic' | 'enhanced' | 'professional';
+   104→export type CustomerTier = 'standard' | 'premium' | 'business' | 'enterprise';
+   105→export type CustomerStatus = 'active' | 'suspended' | 'banned' | 'closed';
+   106→
+   107→export interface CustomerPreferences {
+   108→  language: LanguageCode;
+   109→  currency: CurrencyCode;
+   110→  timezone: string;
+   111→  notifications: NotificationPreferences;
+   112→  marketingOptIn: boolean;
+   113→  twoFactorEnabled: boolean;
+   114→  biometricEnabled: boolean;
+   115→}
+   116→
+   117→export interface NotificationPreferences {
+   118→  email: boolean;
+   119→  sms: boolean;
+   120→  push: boolean;
+   121→  inApp: boolean;
+   122→  transactionAlerts: boolean;
+   123→  promotionalEmails: boolean;
+   124→  securityAlerts: boolean;
+   125→}
+   126→
+   127→export interface CustomerMetadata {
+   128→  source: AcquisitionSource;
+   129→  campaign?: string;
+   130→  referralCode?: string;
+   131→  referredBy?: string;
+   132→  tags: string[];
+   133→  customFields: Record<string, unknown>;
+   134→}
+   135→
+   136→export type LanguageCode = 'en' | 'fr' | 'es' | 'pt' | 'ar' | 'ha' | 'yo' | 'ig';
+   137→export type AcquisitionSource = 'organic' | 'referral' | 'api' | 'import' | 'admin';
+   138→
+   139→// ============== Transaction Types ==============
+   140→
+   141→export interface Transaction {
+   142→  id: string;
+   143→  reference: string;
+   144→  type: TransactionType;
+   145→  amount: number;
+   146→  fee: number;
+   147→  netAmount: number;
+   148→  currency: CurrencyCode;
+   149→  status: TransactionStatus;
+   150→  description: string;
+   151→  narration?: string;
+   152→  fromAccount: Account;
+   153→  toAccount: Account;
+   154→  paymentId?: string;
+   155→  refundId?: string;
+   156→  externalRef?: string;
+   157→  metadata: TransactionMetadata;
+   158→  createdAt: Date;
+   159→  postedAt: Date;
+   160→  settledAt?: Date;
+   161→}
+   162→
+   163→export type TransactionType =
+   164→  | 'payment'
+   165→  | 'refund'
+   166→  | 'transfer'
+   167→  | 'withdrawal'
+   168→  | 'deposit'
+   169→  | 'fee'
+   170→  | 'adjustment'
+   171→  | 'chargeback'
+   172→  | 'reversal';
+   173→
+   174→export type TransactionStatus =
+   175→  | 'pending'
+   176→  | 'posted'
+   177→  | 'completed'
+   178→  | 'failed'
+   179→  | 'reversed'
+   180→  | 'disputed'
+   181→  | 'settled'
+   182→  | 'cancelled';
+   183→
+   184→export interface TransactionMetadata {
+   185→  ipAddress: string;
+   186→  deviceId: string;
+   187→  channel: Channel;
+   188→  source: SourceSystem;
+   189→  batchId?: string;
+   190→  correlationId?: string;
+   191→  tags: string[];
+   192→  customFields: Record<string, unknown>;
+   193→}
+   194→
+   195→export type Channel = 'web' | 'mobile_app' | 'api' | 'webhook' | 'pos' | 'atm' | 'agent';
+   196→export type SourceSystem = 'core' | 'zainpay' | 'admin' | 'migration' | 'import';
+   197→
+   198→// ============== Account Types ==============
+   199→
+   200→export interface Account {
+   201→  id: string;
+   202→  number: string;
+   203→  name: string;
+   204→  type: AccountType;
+   205→  currency: CurrencyCode;
+   206→  balance: number;
+   207→  availableBalance: number;
+   208→  frozenBalance: number;
+   209→  status: AccountStatus;
+   210→  customerId: string;
+   211→  bankDetails?: BankDetails;
+   212→  virtualAccountDetails?: VirtualAccountDetails;
+   213→  metadata: AccountMetadata;
+   214→  createdAt: Date;
+   215→  updatedAt: Date;
+   216→  closedAt?: Date;
+   217→}
+   218→
+   219→export type AccountType = 'wallet' | 'virtual_account' | 'settlement' | 'escrow' | 'fee';
+   220→export type AccountStatus = 'active' | 'frozen' | 'closed' | 'suspended';
+   221→
+   222→export interface BankDetails {
+   223→  bankName: string;
+   224→  bankCode: string;
+   225→  accountNumber: string;
+   226→  accountName: string;
+   227→  bvn?: string; // Bank Verification Number
+   228→  sortCode?: string;
+   229→  nuban?: string; // NUBAN for Nigerian banks
+   230→}
+   231→
+   232→export interface VirtualAccountDetails {
+   233→  bankName: string;
+   234→  accountNumber: string;
+   235→  accountName: string;
+   236→  nuban: string;
+   237→  provider: VirtualAccountProvider;
+   238→  isActive: boolean;
+   239→}
+   240→
+   241→export type VirtualAccountProvider = 'zainpay' | 'flutterwave' | 'paystack';
+   242→
+   243→export interface AccountMetadata {
+   244→  autoCreate: boolean;
+   245→  dailyLimit?: number;
+   246→  monthlyLimit?: number;
+   247→  requiresApproval: boolean;
+   248→  tags: string[];
+   249→}
+   250→
+   251→// ============== Zainbox Types ==============
+   252→
+   253→export interface Zainbox {
+   254→  id: string;
+   255→  codeName: string;
+   256→  name: string;
+   257→  callbackUrl: string;
+   258→  emailNotification: string;
+   259→  description: string;
+   260→  tags: string[];
+   261→  logoUrl?: string;
+   262→  color?: string;
+   263→  status: ZainboxStatus;
+   264→  type: ZainboxType;
+   265→  settings: ZainboxSettings;
+   266→  statistics: ZainboxStatistics;
+   267→  ownerId: string;
+   268→  createdAt: Date;
+   269→  updatedAt: Date;
+   270→}
+   271→
+   272→export type ZainboxStatus = 'active' | 'inactive' | 'suspended' | 'closed';
+   273→export type ZainboxType = 'personal' | 'business' | 'merchant' | 'collection';
+   274→
+   275→export interface ZainboxSettings {
+   276→  allowAutoInternalTransfer: boolean;
+   277→  requireAuthForPayment: boolean;
+   278→  minAmount: number;
+   279→  maxAmount: number;
+   280→  allowedCurrencies: CurrencyCode[];
+   281→  webhookUrl?: string;
+   282→  notificationEmails: string[];
+   283→  settlementSchedule: SettlementSchedule;
+   284→  feeStructure: FeeStructure;
+   285→}
+   286→
+   287→export interface ZainboxStatistics {
+   288→  totalTransactions: number;
+   289→  totalVolume: number;
+   290→  totalFees: number;
+   291→  successfulTransactions: number;
+   292→  failedTransactions: number;
+   293→  averageTransactionValue: number;
+   294→  lastTransactionDate?: Date;
+   295→}
+   296→
+   297→export type SettlementSchedule = 'daily' | 'weekly' | 'monthly' | 'instant' | 'manual';
+   298→
+   299→export interface FeeStructure {
+   300→  flatFee: number;
+   301→  percentageFee: number;
+   302→  minFee: number;
+   303→  maxFee: number;
+   304→  bearer: FeeBearer;
+   305→}
+   306→
+   307→export type FeeBearer = 'sender' | 'receiver' | 'shared';
+   308→
+   309→// ============== Exchange Rate Types ==============
+   310→
+   311→export interface ExchangeRate {
+   312→  id: string;
+   313→  baseCurrency: CurrencyCode;
+   314→  targetCurrency: CurrencyCode;
+   315→  buyRate: number;
+   316→  sellRate: number;
+   317→  midRate: number;
+   318→  spread: number;
+   319→  source: RateSource;
+   320→  effectiveFrom: Date;
+   321→  effectiveTo?: Date;
+   322→  createdAt: Date;
+   323→}
+   324→
+   325→export type CurrencyCode =
+   326→  | 'NGN'
+   327→  | 'USD'
+   328→  | 'GBP'
+   329→  | 'EUR'
+   330→  | 'GHS'
+   331→  | 'ZAR'
+   332→  | 'KES'
+   333→  | 'XOF'
+   334→  | 'XAF'
+   335→  | 'UGX'
+   336→  | 'TZS'
+   337→  | 'RWF'
+   338→  | 'BIF'
+   339→  | 'MAD';
+   340→
+   341→export type RateSource = 'zainpay' | 'cbn' | 'fixer' | 'ecb' | 'custom';
+   342→
+   343→export interface ExchangeRateHistory {
+   344→  rates: ExchangeRate[];
+   345→  period: RatePeriod;
+   346→  volatility: number;
+   347→  trend: 'up' | 'down' | 'stable';
+   348→  high: number;
+   349→  low: number;
+   350→  average: number;
+   351→  open: number;
+   352→  close: number;
+   353→}
+   354→
+   355→export type RatePeriod = 'hourly' | 'daily' | 'weekly' | 'monthly';
+   356→
+   357→// ============== Webhook Types ==============
+   358→
+   359→export interface WebhookConfig {
+   360→  id: string;
+   361→  url: string;
+   362→  secret: string;
+   363→  events: WebhookEventType[];
+   364→  status: WebhookStatus;
+   365→  version: number;
+   366→  retryPolicy: RetryPolicy;
+   367→  headers?: Record<string, string>;
+   368→  lastDeliveryAt?: Date;
+   369→  lastFailureAt?: Date;
+   370→  successCount: number;
+   371→  failureCount: number;
+   372→  createdAt: Date;
+   373→  updatedAt: Date;
+   374→}
+   375→
+   376→export type WebhookEventType =
+   377→  | 'payment.completed'
+   378→  | 'payment.failed'
+   379→  | 'payment.refunded'
+   380→  | 'transaction.created'
+   381→  | 'transaction.updated'
+   382→  | 'transaction.settled'
+   383→  | 'transaction.dispute_created'
+   384→  | 'account.created'
+   385→  | 'account.verified'
+   386→  | 'account.suspended'
+   387→  | 'zainbox.created'
+   388→  | 'zainbox.updated'
+   389→  | 'fraud.alert'
+   390→  | 'system.health_check'
+   391→  | 'rate_limit.exceeded'
+   392→  | 'batch.processing_completed';
+   393→
+   394→export type WebhookStatus = 'active' | 'inactive' | 'disabled' | 'failed';
+   395→
+   396→export interface RetryPolicy {
+   397→  maxAttempts: number;
+   398→  initialDelayMs: number;
+   399→  maxDelayMs: number;
+   400→  backoffMultiplier: number;
+   401→  jitterFactor: number;
+   402→  retryOn: Array<'5xx' | 'timeout' | 'network_error'>;
+   403→}
+   404→
+   405→// ============== Audit & Logging Types ==============
+   406→
+   407→export interface AuditLog {
+   408→  id: string;
+   409→  entityType: AuditEntityType;
+   410→  entityId: string;
+   411→  action: AuditAction;
+   412→  actor: Actor;
+   413→  changes: ChangeRecord[];
+   414→  ipAddress: string;
+   415→  userAgent: string;
+   416→  requestId: string;
+   417→  sessionId: string;
+   418→  metadata: Record<string, unknown>;
+   419→  timestamp: Date;
+   420→}
+   421→
+   422→export type AuditEntityType = 'payment' | 'customer' | 'account' | 'zainbox' | 'user' | 'role' | 'config' | 'webhook' | 'rate_limit' | 'api_key';
+   423→export type AuditAction = 'create' | 'read' | 'update' | 'delete' | 'login' | 'logout' | 'enable' | 'disable' | 'configure' | 'verify' | 'suspend' | 'reactivate' | 'archive';
+   424→
+   425→export interface Actor {
+   426→  id: string;
+   427→  type: ActorType;
+   428→  name: string;
+   429→  email?: string;
+   430→  ip?: string;
+   431→}
+   432→
+   433→export type ActorType = 'user' | 'system' | 'api_key' | 'service' | 'admin' | 'integration';
+   434→
+   435→export interface ChangeRecord {
+   436→  field: string;
+   437→  oldValue: unknown;
+   438→  newValue: unknown;
+   439→}
+   440→
+   441→// ============== API Types ==============
+   442→
+   443→export interface ApiResponse<T = unknown> {
+   444→  success: boolean;
+   445→  data?: T;
+   446→  error?: ApiError;
+   447→  meta?: ResponseMeta;
+   448→  pagination?: PaginationMeta;
+   449→}
+   450→
+   451→export interface ApiError {
+   452→  code: string;
+   453→  message: string;
+   454→  details?: Record<string, unknown>;
+   455→  requestId: string;
+   456→  timestamp: Date;
+   457→  documentation_url?: string;
+   458→}
+   459→
+   460→export interface ResponseMeta {
+   461→  requestId: string;
+   462→  processingTimeMs: number;
+   463→  rateLimitRemaining?: number;
+   464→  rateLimitReset?: Date;
+   465→  apiVersion: string;
+   466→  serverTime: Date;
+   467→}
+   468→
+   469→export interface PaginationMeta {
+   470→  page: number;
+   471→  pageSize: number;
+   472→  totalItems: number;
+   473→  totalPages: number;
+   474→  hasNextPage: boolean;
+   475→  hasPrevPage: boolean;
+   476→}
+   477→
+   478→// ============== Address Types ==============
+   479→
+   480→export interface Address {
+   481→  id: string;
+   482→  line1: string;
+   483→  line2?: string;
+   484→  city: string;
+   485→  state: string;
+   486→  postalCode: string;
+   487→  country: CountryCode;
+   488→  latitude?: number;
+   489→  longitude?: number;
+   490→  isDefault: boolean;
+   491→  label?: string;
+   492→  validated: boolean;
+   493→  metadata?: Record<string, unknown>;
+   494→}
+   495→
+   496→export type CountryCode =
+   497→  | 'NG'
+   498→  | 'US'
+   499→  | 'GB'
+   500→  | 'CA'
+   501→  | 'DE'
+   502→  | 'FR'
+   503→  | 'IT'
+   504→  | 'ES'
+   505→  | 'GH'
+   506→  | 'KE'
+   507→  | 'ZA'
+   508→  | 'CM'
+   509→  | 'SN'
+   510→  | 'CI'
+   511→  | 'BJ'
+   512→  | 'TN'
+   513→  | 'MA'
+   514→  | 'ET'
+   515→  | 'EG'
+   516→  | 'LY'
+   517→  | 'SD'
+   518→  | 'TZ'
+   519→  | 'UG'
+   520→  | 'RW'
+   521→  | 'BI'
+   522→  | 'GQ'
+   523→  | 'ER'
+   524→  | 'DJ'
+   525→  | 'AO'
+   526→  | 'GW'
+   527→  | 'MR'
+   528→  | 'MU'
+   529→  | 'MZ'
+   530→  | 'MW'
+   531→  | 'NA'
+   532→  | 'SL'
+   533→  | 'GM'
+   534→  | 'ST'
+   535→  | 'LC'
+   536→  | 'CV'
+   537→  | 'CF'
+   538→  | 'TD'
+   539→  | 'TG'
+   540→  | 'NE'
+   541→  | 'ML'
+   542→  | 'BF'
+   543→  | 'GN'
+   544→  | 'GW'
+   545→  | 'GA'
+   546→  | 'SN'
+   547→  | 'CG'
+   548→  | 'CD'
+   549→  | 'SC'
+   550→  | 'ZW'
+   551→  | 'MZ'
+   552→  | 'NA';
+   553→
+   554→// ============== Report Types ==============
+   555→
+   556→export interface Report {
+   557→  id: string;
+   558→  type: ReportType;
+   559→  title: string;
+   560→  description: string;
+   561→  parameters: ReportParameters;
+   562→  status: ReportStatus;
+   563→  generatedBy: string;
+   564→  generatedAt: Date;
+   565→  fileUrl?: string;
+   566→  data: ReportData;
+   567→  schedule?: ReportSchedule;
+   568→}
+   569→
+   570→export type ReportType =
+   571→  | 'transaction_summary'
+   572→  | 'revenue_report'
+   573→  | 'customer_acquisition'
+   574→  | 'fraud_analysis'
+   575→  | 'compliance_report'
+   576→  | 'tax_report'
+   577→  | 'settlement_reconciliation'
+   578→  | 'performance_metrics'
+   579→  | 'custom';
+   580→
+   581→export type ReportStatus = 'generating' | 'completed' | 'failed' | 'scheduled';
+   582→
+   583→export interface ReportParameters {
+   584→  startDate: Date;
+   585→  endDate: Date;
+   586→  currencies?: CurrencyCode[];
+   587→  channels?: Channel[];
+   588→  customers?: string[];
+   589→  zainboxes?: string[];
+   590→  minAmount?: number;
+   591→  maxAmount?: number;
+   592→  includeTestTransactions?: boolean;
+   593→}
+   594→
+   595→export interface ReportData {
+   596→  summary: ReportSummary;
+   597→  charts: ChartData[];
+   598→  tables: TableData[];
+   599→  insights: Insight[];
+   600→}
+   601→
+   602→export interface ReportSummary {
+   603→  totalRevenue: number;
+   604→  totalTransactions: number;
+   605→  totalCustomers: number;
+   606→  conversionRate: number;
+   607→  averageOrderValue: number;
+   608→  topProducts?: Array<{ name: string; count: number; revenue: number }>;
+   609→}
+   610→
+   611→export interface ChartData {
+   612→  type: 'line' | 'bar' | 'pie' | 'area' | 'scatter' | 'table';
+   613→  title: string;
+   614→  labels: string[];
+   615→  datasets: Dataset[];
+   616→  options?: Record<string, unknown>;
+   617→}
+   618→
+   619→export interface Dataset {
+   620→  label: string;
+   621→  data: number[];
+   622→  backgroundColor?: string;
+   623→  borderColor?: string;
+   624→  fill?: boolean;
+   625→}
+   626→
+   627→export interface TableData {
+   628→  headers: string[];
+   629→  rows: Array<Record<string, unknown>>;
+   630→}
+   631→
+   632→export interface Insight {
+   633→  type: 'info' | 'warning' | 'success' | 'error' | 'trend';
+   634→  title: string;
+   635→  message: string;
+   636→  actionText?: string;
+   637→  actionUrl?: string;
+   638→  impact?: 'high' | 'medium' | 'low';
+   639→}
+   640→
+   641→export interface ReportSchedule {
+   642→  frequency: ScheduleFrequency;
+   643→  dayOfWeek?: number;
+   644→  hourOfDay?: number;
+   645→  recipients: string[];
+   646→  format: ReportFormat;
+   647→  enabled: boolean;
+   648→  nextRunAt?: Date;
+   649→  lastRunAt?: Date;
+   650→}
+   651→
+   652→export type ScheduleFrequency = 'daily' | 'weekly' | 'monthly' | 'quarterly';
+   653→export type ReportFormat = 'pdf' | 'csv' | 'excel' | 'json' | 'html';
+   654→
+   655→// ============== Role & Permission Types ==============
+   656→
+   657→export interface Role {
+   658→  id: string;
+   659→  name: string;
+   660→  displayName: string;
+   661→  description: string;
+   662→  permissions: Permission[];
+   663→  isSystem: boolean;
+   664→  userCount: number;
+   665→  createdAt: Date;
+   666→  updatedAt: Date;
+   667→}
+   668→
+   669→export interface Permission {
+   670→  id: string;
+   671→  resource: Resource;
+   672→  action: Action;
+   673→  conditions?: Condition[];
+   674→  scope: Scope;
+   675→}
+   676→
+   677→export type Resource =
+   678→  | 'payment'
+   679→  | 'transaction'
+   680→  | 'customer'
+   681→  | 'account'
+   682→  | 'zainbox'
+   683→  | 'report'
+   684→  | 'webhook'
+   685→  | 'api_key'
+   686→  | 'user'
+   687→  | 'role'
+   688→  | 'audit_log'
+   689→  | 'setting'
+   690→  | 'integration';
+   691→
+   692→export type Action = 'create' | 'read' | 'update' | 'delete' | 'execute' | 'manage' | 'admin' | 'approve' | 'reject' | 'view' | 'export' | 'import';
+   693→export type Scope = 'own' | 'team' | 'all' | 'none';
+   694→
+   695→export interface Condition {
+   696→  field: string;
+   697→  operator: ConditionOperator;
+   698→  value: unknown;
+   699→}
+   700→
+   701→export type ConditionOperator = 'equals' | 'not_equals' | 'contains' | 'starts_with' | 'ends_with' | 'greater_than' | 'less_than' | 'in' | 'not_in' | 'is_null' | 'is_not_null' | 'between';
+   702→
+   703→// ============== Integration Types ==============
+   704→
+   705→export interface Integration {
+   706→  id: string;
+   707→  name: string;
+   708→  type: IntegrationType;
+   709→  provider: IntegrationProvider;
+   710→  status: IntegrationStatus;
+   711→  configuration: IntegrationConfiguration;
+   712→  credentials: EncryptedCredentials;
+   713→  healthStatus: HealthStatus;
+   714→  lastSyncAt?: Date;
+   715→  lastError?: string;
+   716→  metrics: IntegrationMetrics;
+   717→  createdAt: Date;
+   718→  updatedAt: Date;
+   719→}
+   720→
+   721→export type IntegrationType = 'payment_provider' | 'analytics' | 'email' | 'sms' | 'crm' | 'accounting' | 'compliance' | 'notification' | 'storage';
+   722→export type IntegrationProvider = 'zainpay' | 'flutterwave' | 'paystack' | 'stripe' | 'twilio' | 'sendgrid' | 'mailchimp' | 'firebase' | 'aws' | 'google' | 'microsoft';
+   723→export type IntegrationStatus = 'active' | 'inactive' | 'error' | 'pending_setup' | 'deprecated';
+   724→export type HealthStatus = 'healthy' | 'degraded' | 'unhealthy' | 'unknown';
+   725→
+   726→export interface IntegrationConfiguration {
+   727→  environment: Environment;
+   728→  region?: string;
+   729→  sandboxMode: boolean;
+   730→  webhookUrls: Record<string, string>;
+   731→  features: string[];
+   732→  rateLimits: RateLimitConfig;
+   733→}
+   734→
+   735→export interface EncryptedCredentials {
+   736→  encrypted: string;
+   737→  algorithm: EncryptionAlgorithm;
+   738→  keyId: string;
+   739→  iv: string;
+   740→  createdAt: Date;
+   741→  expiresAt?: Date;
+   742→}
+   743→
+   744→export type EncryptionAlgorithm = 'aes-256-gcm' | 'aes-128-gcm' | 'rsa-oaep';
+   745→export type Environment = 'production' | 'staging' | 'development' | 'sandbox';
+   746→
+   747→export interface RateLimitConfig {
+   748→  requestsPerSecond: number;
+   749→  requestsPerDay: number;
+   750→  concurrentConnections: number;
+   751→  burstAllowance: number;
+   752→}
+   753→
+   754→export interface IntegrationMetrics {
+   755→  totalRequests: number;
+   756→  successfulRequests: number;
+   757→  failedRequests: number;
+   758→  averageResponseTime: number;
+   759→  uptimePercentage: number;
+   760→  lastRequestAt?: Date;
+   761→}
+   762→
+   763→// ============== Feature Flag Types ==============
+   764→
+   765→export interface FeatureFlag {
+   766→  id: string;
+   767→  name: string;
+   768→  description: string;
+   769→  type: FeatureType;
+   770→  status: FeatureStatus;
+   771→  rules: FeatureRule[];
+   772→  audience: AudienceCriteria;
+   773→  rolloutPercentage: number;
+   774→  variations: FeatureVariation[];
+   775→  createdById: string;
+   776→  createdAt: Date;
+   777→  updatedAt: Date;
+   778→}
+   779→
+   780→export type FeatureType = 'release' | 'experiment' | 'permission' | 'ops' | 'kill_switch';
+   781→export type FeatureStatus = 'enabled' | 'disabled' | 'scheduled';
+   782→export type VariationType = 'boolean' | 'string' | 'number' | 'json';
+   783→
+   784→export interface FeatureRule {
+   785→  id: string;
+   786→  attribute: UserAttribute;
+   787→  operator: RuleOperator;
+   788→  value: unknown;
+   789→  percentage?: number;
+   790→}
+   791→
+   792→export type UserAttribute = 'id' | 'email' | 'country' | 'tier' | 'kyc_level' | 'tags' | 'custom';
+   793→export type RuleOperator = 'equals' | 'not_equals' | 'contains' | 'not_contains' | 'in' | 'not_in' | 'gt' | 'gte' | 'lt' | 'lte' | 'regex' | 'semver_gt' | 'semver_lt';
+   794→
+   795→export interface AudienceCriteria {
+   796→  users?: string[]; // Explicit user IDs
+   797→  excludeUsers?: string[];
+   798→  segments?: string[]; // User segment IDs
+   799→  attributes?: Record<UserAttribute, unknown>; // Attribute-based targeting
+   800→}
+   801→
+   802→export interface FeatureVariation {
+   803→  id: string;
+   804→  name: string;
+   805→  weight: number;
+   806→  configuration: Record<string, unknown>;
+   807→  isControl: boolean;
+   808→}
+   809→
+   810→// ============== Analytics Event Types ==============
+   811→
+   812→export interface AnalyticsEvent {
+   813→  id: string;
+   814→  name: string;
+   815→  category: EventCategory;
+   816→  properties: EventProperties;
+   817→  context: EventContext;
+   818→  timestamp: Date;
+   819→  processed: boolean;
+   820→}
+   821→
+   822→export type EventCategory =
+   823→  | 'page_view'
+   824→  | 'click'
+   825→  | 'form_submit'
+   826→  | 'navigation'
+   827→  | 'session_start'
+   828→  | 'session_end'
+   829→  | 'error'
+   830→  | 'api_call'
+   831→  | 'payment_initiated'
+   832→  | 'payment_completed'
+   833→  | 'payment_failed'
+   834→  | 'search'
+   835→  | 'filter_applied'
+   836→  | 'sort_applied'
+   837→  | 'item_viewed'
+   838→  | 'cart_updated'
+   839→  | 'checkout_started'
+   840→  | 'purchase_completed'
+   841→  | 'signup'
+   842→  | 'login'
+   843→  | 'logout'
+   844→  | 'share'
+   845→  | 'download'
+   846→  | 'video_played'
+   847→  | 'custom';
+   848→
+   849→export interface EventProperties {
+   850→  [key: string]: unknown;
+   851→}
+   852→
+   853→export interface EventContext {
+   854→  url: string;
+   855→  path: string;
+   856→  referrer?: string;
+   857→  userAgent: string;
+   858→  ipAddress: string;
+   859→  sessionId: string;
+   860→  userId?: string;
+   861→  deviceId: string;
+   862→  application: string;
+   863→  version: string;
+   864→  environment: string;
+   865→  abTests?: Array<{ testName: string; variation: string }>;
+   866→  featureFlags?: Record<string, string | boolean>;
+   867→}
+   868→
+   869→// ============== Error Types ==============
+   870→
+   871→export interface AppError {
+   872→  code: string;
+   873→  message: string;
+   874→  statusCode: number;
+   875→  details?: Record<string, unknown>;
+   876→  requestId?: string;
+   877→  stack?: string;
+   878→  cause?: Error;
+   879→  suggestions?: string[];
+   880→  documentationUrl?: string;
+   881→  retryable: boolean;
+   882→}
+   883→
+   884→export class SSMError extends Error implements AppError {
+   885→  code: string;
+   886→  statusCode: number;
+   887→  details?: Record<string, unknown>;
+   888→  requestId?: string;
+   889→  suggestions?: string[];
+   890→  documentationUrl?: string;
+   891→  retryable: boolean;
+   892→
+   893→  constructor(
+   894→    message: string,
+   895→    options: {
+   896→      code: string;
+   897→      statusCode?: number;
+   898→      details?: Record<string, unknown>;
+   899→      cause?: Error;
+   900→      suggestions?: string[];
+   901→      documentationUrl?: string;
+   902→    }
+   903→  ) {
+   904→    super(message);
+   905→    this.name = 'SSMError';
+   906→    this.code = options.code;
+   907→    this.statusCode = options.statusCode || 500;
+   908→    this.message = message;
+   909→    this.details = options.details;
+   910→    this.cause = options.cause;
+   911→    this.suggestions = options.suggestions || [];
+   912→    this.documentationUrl = options.documentationUrl;
+   913→    this.retryable = false;
+   914→
+   915→    if (Error.captureStackTrace) {
+   916→      Error.captureStackTrace(this, SSMError);
+   917→    }
+   918→  }
+   919→
+   920→  toJSON(): AppError {
+   921→    return {
+   922→      code: this.code,
+   923→      message: this.message,
+   924→      statusCode: this.statusCode,
+   925→      details: this.details,
+   926→      requestId: this.requestId,
+   927→      stack: this.stack,
+   928→      suggestions: this.suggestions,
+   929→      documentationUrl: this.documentationUrl,
+   930→      retryable: this.retryable,
+   931→    };
+   932→  }
+   933→}
+   934→
+   935→// Predefined errors
+   936→export const Errors = {
+   937→  PAYMENT_REQUIRED: (field?: string) =>
+   938→    new SSMError(field ? `${field} is required` : 'Payment information is required', {
+   939→      code: 'PAYMENT_001',
+   940→      statusCode: 400,
+   941→      suggestions: ['Provide all required payment fields'],
+   942→    }),
+   943→
+   944→  INVALID_AMOUNT: () =>
+   945→    new SSMError('Invalid amount provided', {
+   946→      code: 'PAYMENT_002',
+   947→      statusCode: 400,
+   948→      suggestions: ['Enter a valid positive number'],
+   949→    }),
+   950→
+   951→  INVALID_CURRENCY: () =>
+   952→    new SSMError('Unsupported currency', {
+   953→      code: 'PAYMENT_003',
+   954→      statusCode: 400,
+   955→      suggestions: ['Use NGN, USD, GBP, EUR, GHS'],
+   956→    }),
+   957→
+   958→  PAYMENT_FAILED: (reason?: string) =>
+   959→    new SSMError(reason || 'Payment processing failed', {
+   960→      code: 'PAYMENT_004',
+   961→      statusCode: 402,
+   962→      retryable: true,
+   963→    }),
+   964→
+   965→  TRANSACTION_NOT_FOUND: (ref?: string) =>
+   966→    new SSMError(`Transaction not found: ${ref || 'unknown'}`, {
+   967→      code: 'TXN_001',
+   968→      statusCode: 404,
+   969→    }),
+   970→
+   971→  INSUFFICIENT_FUNDS: () =>
+   972→    new SSMError('Insufficient funds', {
+   973→      code: 'WALLET_001',
+   974→      statusCode: 402,
+   975→      suggestions: ['Check your balance', 'Use a different payment method'],
+   976→    }),
+   977→
+   978→  RATE_LIMIT_EXCEEDED: (retryAfter?: number) =>
+   979→    new SSMError('Too many requests, please try again later', {
+   980→      code: 'RATE_001',
+   981→      statusCode: 429,
+   982→      retryable: true,
+   983→      suggestions: [`Wait ${retryAfter || 60} seconds before retrying`],
+   984→    }),
+   985→
+   986→  UNAUTHORIZED: () =>
+   987→    new SSMError('Authentication required', {
+   988→      code: 'AUTH_001',
+   989→      statusCode: 401,
+   990→      suggestions: ['Provide valid authentication token'],
+   991→    }),
+   992→
+   993→  FORBIDDEN: () =>
+   994→    new SSMError('Access denied', {
+   995→      code: 'AUTH_002',
+   996→      statusCode: 403,
+   997→      suggestions: ['Check your permissions'],
+   998→    }),
+   999→
+  1000→  NOT_FOUND: (resource?: string) =>
+  1001→    new SSMError(resource ? `${resource} not found` : 'Resource not found', {
+  1002→      code: 'NOT_FOUND_001',
+  1003→      statusCode: 404,
+  1004→    }),
+  1005→
+  1006→  VALIDATION_ERROR: (errors: Record<string, string>) => {
+  1007→    const errorList = Object.entries(errors).map(([field, msg]) => `${field}: ${msg}`);
+  1008→    return new SSMError(`Validation failed: ${errorList.join('; ')}`, {
+  1009→      code: 'VALIDATION_001',
+  1010→      statusCode: 400,
+  1011→      details: errors,
+  1012→    });
+  1013→  },
+  1014→
+  1015→  EXTERNAL_SERVICE_ERROR: (service?: string) =>
+  1016→    new SSMError(service ? `External service error: ${service}` : 'External service unavailable', {
+  1017→      code: 'EXTERNAL_001',
+  1018→      statusCode: 502,
+  1019→      retryable: true,
+  1020→      suggestions: ['Try again later', 'Contact support if issue persists'],
+  1021→    }),
+  1022→
+  1023→  CONFIGURATION_ERROR: (key?: string) =>
+  1024→    new SSMError(key ? `Missing configuration: ${key}` : 'Server configuration error', {
+  1025→      code: 'CONFIG_001',
+  1026→      statusCode: 500,
+  1027→      suggestions: ['Contact administrator'],
+  1028→    }),
+  1029→};
+  1030→
+  1031→// ============== Export All Types ==============
+  1032→
+  1033→export {
+  1034→  SSMError,
+  1035→  Errors,
+  1036→};
+  1037→
+  1038→export default {
+  1039→  // Payment Types
+  1040→  Payment,
+  1041→  PaymentStatus,
+  1042→  PaymentMethod,
+  1043→  PaymentMethodType,
+  1044→  PaymentProvider,
+  1045→  PaymentMetadata,
+  1046→  RiskLevel,
+  1047→  AVSResult,
+  1048→
+  1049→  // Customer Types
+  1050→  Customer,
+  1051→  KYCLevel,
+  1052→  CustomerTier,
+  1053→  CustomerStatus,
+  1054→  CustomerPreferences,
+  1055→  NotificationPreferences,
+  1056→  CustomerMetadata,
+  1057→  LanguageCode,
+  1058→  AcquisitionSource,
+  1059→
+  1060→  // Transaction Types
+  1061→  Transaction,
+  1062→  TransactionType,
+  1063→  TransactionStatus,
+  1064→  TransactionMetadata,
+  1065→  Channel,
+  1066→  SourceSystem,
+  1067→
+  1068→  // Account Types
+  1069→  Account,
+  1070→  AccountType,
+  1071→  AccountStatus,
+  1072→  BankDetails,
+  1073→  VirtualAccountDetails,
+  1074→  VirtualAccountProvider,
+  1075→  AccountMetadata,
+  1076→
+  1077→  // Zainbox Types
+  1078→  Zainbox,
+  1079→  ZainboxStatus,
+  1080→  ZainboxType,
+  1081→  ZainboxSettings,
+  1082→  ZainboxStatistics,
+  1083→  SettlementSchedule,
+  1084→  FeeStructure,
+  1085→  FeeBearer,
+  1086→
+  1087→  // Exchange Rate Types
+  1088→  ExchangeRate,
+  1089→  CurrencyCode,
+  1090→  RateSource,
+  1091→  ExchangeRateHistory,
+  1092→  RatePeriod,
+  1093→
+  1094→  // Webhook Types
+  1095→  WebhookConfig,
+  1096→  WebhookEventType,
+  1097→  WebhookStatus,
+  1098→  RetryPolicy,
+  1099→
+  1100→  // Audit Types
+  1101→  AuditLog,
+  1102→  AuditEntityType,
+  1103→  AuditAction,
+  1104→  Actor,
+  1105→  ActorType,
+  1106→  ChangeRecord,
+  1107→
+  1108→  // API Types
+  1109→  ApiResponse,
+  1110→  ApiError,
+  1111→  ResponseMeta,
+  1112→  PaginationMeta,
+  1113→
+  1114→  // Address Types
+  1115→  Address,
+  1116→  CountryCode,
+  1117→
+  1118→  // Report Types
+  1119→  Report,
+  1120→  ReportType,
+  1121→  ReportStatus,
+  1122→  ReportParameters,
+  1123→  ReportData,
+  1124→  ReportSummary,
+  1125→  ChartData,
+  1126→  Dataset,
+  1127→  TableData,
+  1128→  Insight,
+  1129→  ReportSchedule,
+  1130→  ScheduleFrequency,
+  1131→  ReportFormat,
+  1132→
+  1133→  // Role & Permission Types
+  1134→  Role,
+  1135→  Permission,
+  1136→  Resource,
+  1137→  Action,
+  1138→  Scope,
+  1139→  Condition,
+  1140→  ConditionOperator,
+  1141→
+  1142→  // Integration Types
+  1143→  Integration,
+  1144→  IntegrationType,
+  1145→  IntegrationProvider,
+  1146→  IntegrationStatus,
+  1147→  IntegrationConfiguration,
+  1148→  EncryptedCredentials,
+  1149→  EncryptionAlgorithm,
+  1150→  Environment,
+  1151→  RateLimitConfig,
+  1152→  IntegrationMetrics,
+  1153→
+  1154→  // Feature Flag Types
+  1155→  FeatureFlag,
+  1156→  FeatureType,
+  1157→  FeatureStatus,
+  1158→  VariationType,
+  1159→  FeatureRule,
+  1160→  UserAttribute,
+  1161→  RuleOperator,
+  1162→  AudienceCriteria,
+  1163→  FeatureVariation,
+  1164→
+  1165→  // Analytics Types
+  1166→  AnalyticsEvent,
+  1167→  EventCategory,
+  1168→  EventProperties,
+  1169→  EventContext,
+  1170→
+  1171→  // Error Types
+  1172→  AppError,
+  1173→};
+  1174→

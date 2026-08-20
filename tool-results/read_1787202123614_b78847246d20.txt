@@ -1,0 +1,1510 @@
+     1→/**
+     2→ * Enterprise Utility Library
+     3→ * Collection of reusable utility functions for the SSM Pay platform
+     4→ * 
+     5→ * @module utils/index
+     6→ */
+     7→
+     8→import { logger } from '@/lib/logger';
+     9→
+    10→// ============== String Utilities ==============
+    11→
+    12→export namespace StringUtils {
+    13→  /**
+    14→   * Convert string to title case
+    15→   */
+    16→  export function toTitleCase(str: string): string {
+    17→    return str
+    18→      .toLowerCase()
+    19→      .replace(/(?:^|\s|[-_])\w/g, (match) => match.toUpperCase())
+    20→      .replace(/[-_]/g, ' ');
+    21→  }
+    22→
+    23→  /**
+    24→   * Generate a random string of specified length
+    25→   */
+    26→  export function random(length: number = 16, charset?: string): string {
+    27→    const defaultCharset = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+    28→    const chars = charset || defaultCharset;
+    29→    let result = '';
+    30→    
+    31→    for (let i = 0; i < length; i++) {
+    32→      result += chars.charAt(Math.floor(Math.random() * chars.length));
+    33→    }
+    34→    
+    35→    return result;
+    36→  }
+    37→
+    38→  /**
+    39→   * Truncate string with ellipsis
+    40→   */
+    41→  export function truncate(str: string, maxLength: number, suffix = '...'): string {
+    42→    if (str.length <= maxLength) return str;
+    43→    return str.slice(0, maxLength - suffix.length) + suffix;
+    44→  }
+    45→
+    46→  /**
+    47→   * Mask sensitive information (e.g., email, phone)
+    48→   */
+    49→  export function mask(str: string, visibleChars: number = 4, maskChar = '*'): string {
+    50→    if (str.length <= visibleChars) return str;
+    51→    
+    52→    const start = str.slice(0, Math.ceil(visibleChars / 2));
+    53→    const end = str.slice(-Math.floor(visibleChars / 2));
+    54→    const maskLength = str.length - visibleChars;
+    55→    
+    56→    return `${start}${maskChar.repeat(maskLength)}${end}`;
+    57→  }
+    58→
+    59→  /**
+    60→   * Check if string is valid email
+    61→   */
+    62→  export function isValidEmail(email: string): boolean {
+    63→    const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+    64→    return emailRegex.test(email);
+    65→  }
+    66→
+    67→  /**
+    68→   * Check if string is valid phone number (international format)
+    69→   */
+    70→  export function isValidPhone(phone: string): boolean {
+    71→    // Remove all non-digit characters
+    72→    const digits = phone.replace(/\D/g, '');
+    73→    // International numbers are typically 10-15 digits
+    74→    return digits.length >= 10 && digits.length <= 15 && /^\d+$/.test(digits);
+    75→  }
+    76→
+    77→  /**
+    78→   * Escape HTML special characters
+    79→   */
+    80→  export function escapeHtml(str: string): string {
+    81→    const htmlEntities: Record<string, string> = {
+    82→      '&': '&amp;',
+    83→      '<': '&lt;',
+    84→      '>': '&gt;',
+    85→      '"': '&quot;',
+    86→      "'": '&#39;',
+    87→      '/': '&#x2F;',
+    88→    };
+    89→    
+    90→    return str.replace(/[&<>"'/]/g, (char) => htmlEntities[char]);
+    91→  }
+    92→
+    93→  /**
+    94→   * Generate slug from string
+    95→   */
+    96→  export function slugify(str: string): string {
+    97→    return str
+    98→      .toLowerCase()
+    99→      .trim()
+   100→      .replace(/[^\w\s-]/g, '')
+   101→      .replace(/[\s_-]+/g, '-')
+   102→      .replace(/^-+|-+$/g, '');
+   103→  }
+   104→
+   105→  /**
+   106→   * Reverse a string
+   107→   */
+   108→  export function reverse(str: string): string {
+   109→    return str.split('').reverse().join('');
+   110→  }
+   111→
+   112→  /**
+   113→   * Count occurrences of substring in string
+   114→   */
+   115→  export function countOccurrences(str: string, subStr: string): number {
+   116→    return str.split(subStr).length - 1;
+   117→  }
+   118→
+   119→  /**
+   120→   * Pluralize a word based on count
+   121→   */
+   122→  export function pluralize(count: number, singular: string, plural?: string): string {
+   123→    return count === 1 ? singular : (plural || `${singular}s`);
+   124→  }
+   125→}
+   126→
+   127→// ============== Number Utilities ==============
+   128→
+   129→export namespace NumberUtils {
+   130→  /**
+   131→   * Format number as currency
+   132→   */
+   133→  export function formatCurrency(
+   134→    amount: number,
+   135→    currency: string = 'NGN',
+   136→    locale: string = 'en-NG'
+   137→  ): string {
+   138→    return new Intl.NumberFormat(locale, {
+   139→      style: 'currency',
+   140→      currency,
+   141→      minimumFractionDigits: 2,
+   142→      maximumFractionDigits: 2,
+   143→    }).format(amount);
+   144→  }
+   145→
+   146→  /**
+   147→   * Format number with commas (thousands separator)
+   148→   */
+   149→  export function formatNumber(num: number, decimals: number = 2): string {
+   150→    return num.toLocaleString('en-US', {
+   151→      minimumFractionDigits: decimals,
+   152→      maximumFractionDigits: decimals,
+   153→    });
+   154→  }
+   155→
+   156→  /**
+   157→   * Round number to specified decimal places
+   158→   */
+   159→  export function round(num: number, decimals: number = 2): number {
+   160→    const factor = Math.pow(10, decimals);
+   161→    return Math.round((num + Number.EPSILON) * factor) / factor;
+   162→  }
+   163→
+   164→  /**
+   165→   * Clamp number between min and max
+   166→   */
+   167→  export function clamp(num: number, min: number, max: number): number {
+   168→    return Math.min(Math.max(num, min), max);
+   169→  }
+   170→
+   171→  /**
+   172→   * Check if number is within range (inclusive)
+   173→   */
+   174→  export function isInRange(num: number, min: number, max: number): boolean {
+   175→    return num >= min && num <= max;
+   176→  }
+   177→
+   178→  /**
+   179→   * Generate random integer between min and max (inclusive)
+   180→   */
+   181→  export function randomInt(min: number, max: number): number {
+   182→    return Math.floor(Math.random() * (max - min + 1)) + min;
+   183→  }
+   184→
+   185→  /**
+   186→   * Calculate percentage
+   187→   */
+   188→  export function percentage(value: number, total: number): number {
+   189→    if (total === 0) return 0;
+   190→    return (value / total) * 100;
+   191→  }
+   192→
+   193→  /**
+   194→   * Calculate percentage change between two values
+   195→   */
+   196→  export function percentageChange(oldValue: number, newValue: number): number {
+   197→    if (oldValue === 0) return newValue > 0 ? 100 : 0;
+   198→    return ((newValue - oldValue) / Math.abs(oldValue)) * 100;
+   199→  }
+   200→
+   201→  /**
+   202→   * Convert bytes to human-readable format
+   203→   */
+   204→  export function formatBytes(bytes: number, decimals: number = 2): string {
+   205→    if (bytes === 0) return '0 Bytes';
+   206→
+   207→    const k = 1024;
+   208→    const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+   209→    const i = Math.floor(Math.log(bytes) / Math.log(k));
+   210→
+   211→    return parseFloat((bytes / Math.pow(k, i)).toFixed(decimals)) + ' ' + sizes[i];
+   212→  }
+   213→
+   214→  /**
+   215→   * Parse string to number safely
+   216→   */
+   217→  export function parseSafe(value: unknown, fallback: number = 0): number {
+   218→    const parsed = Number(value);
+   219→    return isNaN(parsed) ? fallback : parsed;
+   220→  }
+   221→
+   222→  /**
+   223→   * Linear interpolation between two values
+   224→   */
+   225→  export function lerp(start: number, end: number, t: number): number {
+   226→    return start + (end - start) * clamp(t, 0, 1);
+   227→  }
+   228→
+   229→  /**
+   230→   * Map value from one range to another
+   231→   */
+   232→  export function mapRange(
+   233→    value: number,
+   234→    inMin: number,
+   235→    inMax: number,
+   236→    outMin: number,
+   237→    outMax: number
+   238→  ): number {
+   239→    return ((value - inMin) * (outMax - outMin)) / (inMax - inMin) + outMin;
+   240→  }
+   241→}
+   242→
+   243→// ============== Date & Time Utilities ==============
+   244→
+   245→export namespace DateUtils {
+   246→  /**
+   247→   * Format date to relative time (e.g., "2 hours ago")
+   248→   */
+   249→  export function timeAgo(date: Date | string): string {
+   250→    const now = new Date();
+   251→    const past = typeof date === 'string' ? new Date(date) : date;
+   252→    const diffMs = now.getTime() - past.getTime();
+   253→    const diffSecs = Math.floor(diffMs / 1000);
+   254→    const diffMins = Math.floor(diffSecs / 60);
+   255→    const diffHours = Math.floor(diffMins / 60);
+   256→    const diffDays = Math.floor(diffHours / 24);
+   257→    const diffWeeks = Math.floor(diffDays / 7);
+   258→    const diffMonths = Math.floor(diffDays / 30);
+   259→
+   260→    if (diffSecs < 60) return `${diffSecs} seconds ago`;
+   261→    if (diffMins < 60) return `${diffMins} minute${diffMins !== 1 ? 's' : ''} ago`;
+   262→    if (diffHours < 24) return `${diffHours} hour${diffHours !== 1 ? 's' : ''} ago`;
+   263→    if (diffDays < 7) return `${diffDays} day${diffDays !== 1 ? 's' : ''} ago`;
+   264→    if (diffWeeks < 4) return `${diffWeeks} week${diffWeeks !== 1 ? 's' : ''} ago`;
+   265→    if (diffMonths < 12) return `${diffMonths} month${diffMonths !== 1 ? 's' : ''} ago`;
+   266→    
+   267→    const diffYears = Math.floor(diffMonths / 12);
+   268→    return `${diffYears} year${diffYears !== 1 ? 's' : ''} ago`;
+   269→  }
+   270→
+   271→  /**
+   272→   * Format date to locale string
+   273→   */
+   274→  export function formatDate(
+   275→    date: Date | string,
+   276→    options?: Intl.DateTimeFormatOptions,
+   277→    locale: string = 'en-US'
+   278→  ): string {
+   279→    const d = typeof date === 'string' ? new Date(date) : date;
+   280→    return d.toLocaleDateString(locale, {
+   281→      year: 'numeric',
+   282→      month: 'short',
+   283→      day: 'numeric',
+   284→      ...options,
+   285→    });
+   286→  }
+   287→
+   288→  /**
+   289→   * Format date and time
+   290→   */
+   291→  export function formatDateTime(date: Date | string, locale: string = 'en-US'): string {
+   292→    const d = typeof date === 'string' ? new Date(date) : date;
+   293→    return d.toLocaleString(locale, {
+   294→      year: 'numeric',
+   295→      month: 'short',
+   296→      day: 'numeric',
+   297→      hour: '2-digit',
+   298→      minute: '2-digit',
+   299→    });
+   300→  }
+   301→
+   302→  /**
+   303→   * Check if date is today
+   304→   */
+   305→  export function isToday(date: Date | string): boolean {
+   306→    const d = typeof date === 'string' ? new Date(date) : date;
+   307→    const today = new Date();
+   308→    return (
+   309→      d.getDate() === today.getDate() &&
+   310→      d.getMonth() === today.getMonth() &&
+   311→      d.getFullYear() === today.getFullYear()
+   312→    );
+   313→  }
+   314→
+   315→  /**
+   316→   * Check if date is in the past
+   317→   */
+   318→  export function isPast(date: Date | string): boolean {
+   319→    const d = typeof date === 'string' ? new Date(date) : date;
+   320→    return d.getTime() < Date.now();
+   321→  }
+   322→
+   323→  /**
+   324→   * Check if date is in the future
+   325→   */
+   326→  export function isFuture(date: Date | string): boolean {
+   327→    const d = typeof date === 'string' ? new Date(date) : date;
+   328→    return d.getTime() > Date.now();
+   329→  }
+   330→
+   331→  /**
+   332→   * Add days to date
+   333→   */
+   334→  export function addDays(date: Date, days: number): Date {
+   335→    const result = new Date(date);
+   336→    result.setDate(result.getDate() + days);
+   337→    return result;
+   338→  }
+   339→
+   340→  /**
+   341→   * Add hours to date
+   342→   */
+   343→  export function addHours(date: Date, hours: number): Date {
+   344→    const result = new Date(date);
+   345→    result.setHours(result.getHours() + hours);
+   346→    return result;
+   347→  }
+   348→
+   349→  /**
+   350→   * Get difference in days between two dates
+   351→   */
+   352→  export function diffInDays(date1: Date | string, date2: Date | string): number {
+   353→    const d1 = typeof date1 === 'string' ? new Date(date1) : date1;
+   354→    const d2 = typeof date2 === 'string' ? new Date(date2) : date2;
+   355→    const diffTime = Math.abs(d1.getTime() - d2.getTime());
+   356→    return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+   357→  }
+   358→
+   359→  /**
+   360→   * Get start of day
+   361→   */
+   362→  export function startOfDay(date: Date): Date {
+   363→    const result = new Date(date);
+   364→    result.setHours(0, 0, 0, 0);
+   365→    return result;
+   366→  }
+   367→
+   368→  /**
+   369→   * Get end of day
+   370→   */
+   371→  export function endOfDay(date: Date): Date {
+   372→    const result = new Date(date);
+   373→    result.setHours(23, 59, 59, 999);
+   374→    return result;
+   375→  }
+   376→
+   377→  /**
+   378→   * Get start of month
+   379→   */
+   380→  export function startOfMonth(date: Date): Date {
+   381→    return new Date(date.getFullYear(), date.getMonth(), 1);
+   382→  }
+   383→
+   384→  /**
+   385→   * Get end of month
+   386→   */
+   387→  export function endOfMonth(date: Date): Date {
+   388→    return new Date(date.getFullYear(), date.getMonth() + 1, 0);
+   389→  }
+   390→
+   391→  /**
+   392→   * Check if year is a leap year
+   393→   */
+   394→  export function isLeapYear(year: number): boolean {
+   395→    return (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
+   396→  }
+   397→
+   398→  /**
+   399→   * Get days in month
+   400→   */
+   401→  export function getDaysInMonth(year: number, month: number): number {
+   402→    return new Date(year, month + 1, 0).getDate();
+   403→  }
+   404→
+   405→  /**
+   406→   * Get quarter of year (1-4)
+   407→   */
+   408→  export function getQuarter(date: Date): number {
+   409→    return Math.ceil((date.getMonth() + 1) / 3);
+   410→  }
+   411→}
+   412→
+   413→// ============== Array Utilities ==============
+   414→
+   415→export namespace ArrayUtils {
+   416→  /**
+   417→   * Chunk array into smaller arrays of specified size
+   418→   */
+   419→  export function chunk<T>(array: T[], size: number): T[][] {
+   420→    const chunks: T[][] = [];
+   421→    for (let i = 0; i < array.length; i += size) {
+   422→      chunks.push(array.slice(i, i + size));
+   423→    }
+   424→    return chunks;
+   425→  }
+   426→
+   427→  /**
+   428→   * Shuffle array (Fisher-Yates)
+   429→   */
+   430→  export function shuffle<T>(array: T[]): T[] {
+   431→    const result = [...array];
+   432→    for (let i = result.length - 1; i > 0; i--) {
+   433→      const j = Math.floor(Math.random() * (i + 1));
+   434→      [result[i], result[j]] = [result[j], result[i]];
+   435→    }
+   436→    return result;
+   437→  }
+   438→
+   439→  /**
+   440→   * Get unique values from array
+   441→   */
+   442→  export function unique<T>(array: T[]): T[] {
+   443→    return [...new Set(array)];
+   444→  }
+   445→
+   446→  /**
+   447→   * Group array by key function
+   448→   */
+   449→  export function groupBy<T, K extends string | number>(
+   450→    array: T[],
+   451→    keyFn: (item: T) => K
+   452→  ): Record<K, T[]> {
+   453→    return array.reduce((groups, item) => {
+   454→      const key = keyFn(item);
+   455→      (groups[key] = groups[key] || []).push(item);
+   456→      return groups;
+   457→    }, {} as Record<K, T[]>);
+   458→  }
+   459→
+   460→  /**
+   461→   * Sort array by key function
+   462→   */
+   463→  export function sortBy<T>(array: T[], keyFn: (item: T) => number | string, order: 'asc' | 'desc' = 'asc'): T[] {
+   464→    return [...array].sort((a, b) => {
+   465→      const valA = keyFn(a);
+   466→      const valB = keyFn(b);
+   467→      
+   468→      if (typeof valA === 'string' && typeof valB === 'string') {
+   469→        return order === 'asc' 
+   470→          ? valA.localeCompare(valB)
+   471→          : valB.localeCompare(valA);
+   472→      }
+   473→      
+   474→      const numA = Number(valA);
+   475→      const numB = Number(valB);
+   476→      
+   477→      return order === 'asc' ? numA - numB : numB - numA;
+   478→    });
+   479→  }
+   480→
+   481→  /**
+   482→   * Flatten nested array
+   483→   */
+   484→  export function flatten<T>(array: (T | T[])[]): T[] {
+   485→    return array.reduce<T[]>((flat, item) => {
+   486→      return flat.concat(Array.isArray(item) ? item : [item]);
+   487→    }, []);
+   488→  }
+   489→
+   490→  /**
+   491→   * Find intersection of two arrays
+   492→   */
+   493→  export function intersection<T>(arr1: T[], arr2: T[]): T[] {
+   494→    const set2 = new Set(arr2);
+   495→    return arr1.filter(item => set2.has(item));
+   496→  }
+   497→
+   498→  /**
+   499→   * Find difference of two arrays (items in arr1 not in arr2)
+   500→   */
+   501→  export function difference<T>(arr1: T[], arr2: T[]): T[] {
+   502→    const set2 = new Set(arr2);
+   503→    return arr1.filter(item => !set2.has(item));
+   504→  }
+   505→
+   506→  /**
+   507→   * Partition array based on predicate
+   508→   */
+   509→  export function partition<T>(
+   510→    array: T[],
+   511→    predicate: (item: T) => boolean
+   512→  ): [T[], T[]] {
+   513→    return [
+   514→      array.filter(predicate),
+   515→      array.filter(item => !predicate(item)),
+   516→    ];
+   517→  }
+   518→
+   519→  /**
+   520→   * Pick random elements from array
+   521→   */
+   522→  export function sample<T>(array: T[], count: number = 1): T[] {
+   523→    const shuffled = shuffle(array);
+   524→    return shuffled.slice(0, Math.min(count, array.length));
+   525→  }
+   526→
+   527→  /**
+   528→   * Check if array includes all items
+   529→   */
+   530→  export function includesAll<T>(array: T[], items: T[]): boolean {
+   531→    return items.every(item => array.includes(item));
+   532→  }
+   533→
+   534→  /**
+   535→   * Create range array
+   536→   */
+   537→  export function range(start: number, end?: number, step: number = 1): number[] {
+   538→    const result: number[] = [];
+   539→    
+   540→    if (end === undefined) {
+   541→      end = start;
+   542→      start = 0;
+   543→    }
+   544→    
+   545→    for (let i = start; step > 0 ? i <= end : i >= end; i += step) {
+   546→      result.push(i);
+   547→    }
+   548→    
+   549→    return result;
+   550→  }
+   551→
+   552→  /**
+   553→   * Remove duplicates while preserving order
+   554→   */
+   555→  export function distinct<T>(array: T[]): T[] {
+   556→    const seen = new Set<T>();
+   557→    return array.filter(item => {
+   558→      if (seen.has(item)) return false;
+   559→      seen.add(item);
+   560→      return true;
+   561→    });
+   562→  }
+   563→
+   564→  /**
+   565→   * Sum all numeric values in array
+   566→   */
+   567→  export function sum(array: number[]): number {
+   568→    return array.reduce((acc, val) => acc + val, 0);
+   569→  }
+   570→
+   571→  /**
+   572→   * Average of numeric values
+   573→   */
+   574→  export function average(array: number[]): number {
+   575→    if (array.length === 0) return 0;
+   576→    return sum(array) / array.length;
+   577→  }
+   578→
+   579→  /**
+   580→   * Min value in array
+   581→   */
+   582→  export function min(array: number[]): number {
+   583→    return Math.min(...array);
+   584→  }
+   585→
+   586→  /**
+   587→   * Max value in array
+   588→   */
+   589→  export function max(array: number[]): number {
+   590→    return Math.max(...array);
+   591→  }
+   592→
+   593→  /**
+   594→   * Find index of element matching predicate
+   595→   */
+   596→  export function findIndex<T>(array: T[], predicate: (item: T) => boolean): number {
+   597→    return array.findIndex(predicate);
+   598→  }
+   599→
+   600→  /**
+   601→   * Remove element at index
+   602→   */
+   603→  export function removeAt<T>(array: T[], index: number): T[] {
+   604→    return [...array.slice(0, index), ...array.slice(index + 1)];
+   605→  }
+   606→
+   607→  /**
+   608→   * Insert element at index
+   609→   */
+   610→  export function insertAt<T>(array: T[], index: number, item: T): T[] {
+   611→    return [...array.slice(0, index), item, ...array.slice(index)];
+   612→  }
+   613→
+   614→  /**
+   615→   * Update element at index
+   616→   */
+   617→  export function updateAt<T>(array: T[], index: number, updater: (item: T) => T): T[] {
+   618→    return array.map((item, i) => i === index ? updater(item) : item);
+   619→  }
+   620→
+   621→  /**
+   622→   * Rotate array left by n positions
+   623→   */
+   624→  export function rotateLeft<T>(array: T[], n: number): T[] {
+   625→    const offset = n % array.length;
+   626→    return [...array.slice(offset), ...array.slice(0, offset)];
+   627→  }
+   628→
+   629→  /**
+   630→   * Rotate array right by n positions
+   631→   */
+   632→  export function rotateRight<T>(array: T[], n: number): T[] {
+   633→    const offset = n % array.length;
+   634→    return rotateLeft(array, array.length - offset);
+   635→  }
+   636→
+   637→  /**
+   638→   * Zip multiple arrays together
+   639→   */
+   640→  export function zip<T, U>(arr1: T[], arr2: U[]): [T, U][] {
+   641→    const length = Math.min(arr1.length, arr2.length);
+   642→    return Array.from({ length }, (_, i) => [arr1[i], arr2[i]]);
+   643→  }
+   644→
+   645→  /**
+   646→   * Unzip paired array into two arrays
+   647→   */
+   648→  export function unzip<T, U>(pairs: [T, U][]): [T[], U[]] {
+   649→    return pairs.reduce(
+   650→      ([arr1, arr2], [t, u]) => [[...arr1, t], [...arr2, u]],
+   651→      [[] as T[], [] as U[]]
+   652→    );
+   653→  }
+   654→
+   655→  /**
+   656→   * Deep clone an object/array
+   657→   */
+   658→  export function deepClone<T>(obj: T): T {
+   659→    return JSON.parse(JSON.stringify(obj));
+   660→  }
+   661→
+   662→  /**
+   663→   * Compare two arrays for equality
+   664→   */
+   665→  export function isEqual<T>(arr1: T[], arr2: T[]): boolean {
+   666→    if (arr1.length !== arr2.length) return false;
+   667→    return arr1.every((val, idx) => val === arr2[idx]);
+   668→  }
+   669→
+   670→  /**
+   671→   * Check if array is empty or null/undefined
+   672→   */
+   673→  export function isEmpty<T>(array: T[] | null | undefined): boolean {
+   674→    return !array || array.length === 0;
+   675→  }
+   676→
+   677→  /**
+   678→   * Get first element that matches predicate
+   679→   */
+   680→  export function find<T>(array: T[], predicate: (item: T) => boolean): T | undefined {
+   681→    return array.find(predicate);
+   682→  }
+   683→
+   684→  /**
+   685→   * Get last element
+   686→   */
+   687→  export function last<T>(array: T[]): T | undefined {
+   688→    return array[array.length - 1];
+   689→  }
+   690→
+   691→  /**
+   692→   * Get first element
+   693→   */
+   694→  export function first<T>(array: T[]): T | undefined {
+   695→    return array[0];
+   696→  }
+   697→
+   698→  /**
+   699→   * Take first n elements
+   700→   */
+   701→  export function take<T>(array: T[], n: number): T[] {
+   702→    return array.slice(0, n);
+   703→  }
+   704→
+   705→  /**
+   706→   * Drop first n elements
+   707→   */
+   708→  export function drop<T>(array: T[], n: number): T[] {
+   709→    return array.slice(n);
+   710→  }
+   711→
+   712→  /**
+   713→   * Take last n elements
+   714→   */
+   715→  export function takeRight<T>(array: T[], n: number): T[] {
+   716→    return array.slice(-n || array.length);
+   717→  }
+   718→
+   719→  /**
+   720→   * Drop last n elements
+   721→   */
+   722→  export function dropRight<T>(array: T[], n: number): T[] {
+   723→    return array.slice(0, -n || undefined);
+   724→  }
+   725→
+   726→  /**
+   727→   * Compact - remove falsy values from array
+   728→   */
+   729→  export function compact<T>(array: (T | null | undefined | false | 0 | '')[]): T[] {
+   730→    return array.filter(Boolean) as T[];
+   731→  }
+   732→
+   733→  /**
+   734→   * Fill array with value
+   735→   */
+   736→  export function fill<T>(length: number, value: T): T[] {
+   737→    return Array(length).fill(value);
+   738→  }
+   739→
+   740→  /**
+   741→   * Repeat value n times into array
+   742→   */
+   743→  export function repeat<T>(value: T, times: number): T[] {
+   744→    return Array(times).fill(value);
+   745→  }
+   746→
+   747→  /**
+   748→   * Split array at index
+   749→   */
+   750→  export function splitAt<T>(array: T[], index: number): [T[], T[]] {
+   751→    return [array.slice(0, index), array.slice(index)];
+   752→  }
+   753→
+   754→  /**
+   755→   * Batches - split array into batches of size
+   756→   */
+   757→  export function batches<T>(array: T[], size: number): T[][] {
+   758→    return chunk(array, size);
+   759→  }
+   760→
+   761→  /**
+   762→   * Paginate array
+   763→   */
+   764→  export function paginate<T>(
+   765→    array: T[],
+   766→    page: number,
+   767→    pageSize: number
+   768→  ): { data: T[]; pagination: PaginationInfo } {
+   769→    const totalItems = array.length;
+   770→    const totalPages = Math.ceil(totalItems / pageSize);
+   771→    const offset = (page - 1) * pageSize;
+   772→
+   773→    return {
+   774→      data: array.slice(offset, offset + pageSize),
+   775→      pagination: {
+   776→        page,
+   777→        pageSize,
+   778→        totalItems,
+   779→        totalPages,
+   780→        hasNext: page < totalPages,
+   781→        hasPrev: page > 1,
+   782→      },
+   783→    };
+   784→  }
+   785→}
+   786→
+   787→interface PaginationInfo {
+   788→  page: number;
+   789→  pageSize: number;
+   790→  totalItems: number;
+   791→  totalPages: number;
+   792→  hasNext: boolean;
+   793→  hasPrev: boolean;
+   794→}
+   795→
+   796→// ============== Object Utilities ==============
+   797→
+   798→export namespace ObjectUtils {
+   799→  /**
+   800→   * Deep merge objects
+   801→   */
+   802→  export function deepMerge<T extends Record<string, unknown>>(
+   803→    target: T,
+   804→    source: Partial<T>
+   805→  ): T {
+   806→    const result = { ...target };
+   807→
+   808→    for (const key of Object.keys(source)) {
+   809→      const sourceVal = source[key as keyof T];
+   810→      const targetVal = target[key as keyof T];
+   811→
+   812→      if (
+   813→        sourceVal &&
+   814→        typeof sourceVal === 'object' &&
+   815→        !Array.isArray(sourceVal) &&
+   816→        targetVal &&
+   817→        typeof targetVal === 'object' &&
+   818→        !Array.isArray(targetVal)
+   819→      ) {
+   820→        (result as Record<string, unknown>)[key] = deepMerge(
+   821→          targetVal as Record<string, unknown>,
+   822→          sourceVal as Record<string, unknown>
+   823→        );
+   824→      } else {
+   825→        (result as Record<string, unknown>)[key] = sourceVal;
+   826→      }
+   827→    }
+   828→
+   829→    return result;
+   830→  }
+   831→
+   832→  /**
+   833→   * Pick specific keys from object
+   834→   */
+   835→  export function pick<T extends Record<string, unknown>, K extends keyof T>(
+   836→    obj: T,
+   837→    keys: K[]
+   838→  ): Pick<T, K> {
+   839→    const result = {} as Pick<T, K>;
+   840→    for (const key of keys) {
+   841→      if (key in obj) {
+   842→        result[key] = obj[key];
+   843→      }
+   844→    }
+   845→    return result;
+   846→  }
+   847→
+   848→  /**
+   849→   * Omit specific keys from object
+   850→   */
+   851→  export function omit<T extends Record<string, unknown>, K extends keyof T>(
+   852→    obj: T,
+   853→    keys: K[]
+   854→  ): Omit<T, K> {
+   855→    const result = { ...obj };
+   856→    for (const key of keys) {
+   857→      delete result[key];
+   858→    }
+   859→    return result as Omit<T, K>;
+   860→  }
+   861→
+   862→  /**
+   863→   * Check if object is empty
+   864→   */
+   865→  export function isEmpty(obj: Record<string, unknown>): boolean {
+   866→    return Object.keys(obj).length === 0;
+   867→  }
+   868→
+   869→  /**
+   870→   * Get all nested values from object
+   871→   */
+   872→  export function getValues(obj: Record<string, unknown>): unknown[] {
+   873→    const values: unknown[] = [];
+   874→
+   875→    for (const value of Object.values(obj)) {
+   876→      if (value && typeof value === 'object' && !Array.isArray(value)) {
+   877→        values.push(...getValues(value as Record<string, unknown>));
+   878→      } else {
+   879→        values.push(value);
+   880→      }
+   881→    }
+   882→
+   883→    return values;
+   884→  }
+   885→
+   886→  /**
+   887→   * Freeze object deeply
+   888→   */
+   889→  export function deepFreeze<T>(obj: T): Readonly<T> {
+   890→    Object.freeze(obj);
+   891→
+   892→    Object.getOwnPropertyNames(obj).forEach(prop => {
+   893→      const value = obj[prop as keyof T];
+   894→      if (
+   895→        value &&
+   896→        typeof value === 'object' &&
+   897→        !Object.isFrozen(value)
+   898→      ) {
+   899→        deepFreeze(value);
+   900→      }
+   901→    });
+   902→
+   903→    return obj;
+   904→  }
+   905→
+   906→  /**
+   907→   * Transform object keys using mapping function
+   908→   */
+   909→  export function mapKeys<T extends Record<string, unknown>, K extends string>(
+   910→    obj: T,
+   911→    mapper: (key: string) => K
+   912→  ): Record<K, T[keyof T]> {
+   913→    return Object.fromEntries(
+   914→      Object.entries(obj).map(([key, value]) => [mapper(key), value])
+   915→    ) as Record<K, T[keyof T]>;
+   916→  }
+   917→
+   918→  /**
+   919→   * Transform object values using mapping function
+   920→   */
+   921→  export function mapValues<T extends Record<string, unknown>, V>(
+   922→    obj: T,
+   923→    mapper: (value: T[keyof T], key: string) => V
+   924→  ): Record<string, V> {
+   925→    return Object.fromEntries(
+   926→      Object.entries(obj).map(([key, value]) => [key, mapper(value as T[keyof T], key)])
+   927→    );
+   928→  }
+   929→
+   930→  /**
+   931→   * Rename object key
+   932→   */
+   933→  export function renameKey<T extends Record<string, unknown>>(
+   934→    obj: T,
+   935→    oldKey: string,
+   936→    newKey: string
+   937→  ): Record<string, unknown> {
+   938→    const { [removed], ...rest } = obj as any;
+   939→    return { ...rest, [newKey]: removed };
+   940→  }
+   941→
+   942→  /**
+   943→   * Invert object (swap keys and values)
+   944→   */
+   945→  export function invert<T extends Record<string, string | number>>(
+   946→    obj: T
+   947→  ): Record<string | number, string> {
+   948→    return Object.fromEntries(
+   949→      Object.entries(obj).map(([key, value]) => [value, key])
+   950→    ) as Record<string | number, string>;
+   951→  }
+   952→
+   953→  /**
+   954→   * Clone object without reference
+   955→   */
+   956→  export function clone<T extends Record<string, unknown>>(obj: T): T {
+   957→    return JSON.parse(JSON.stringify(obj));
+   958→  }
+   959→
+   960→  /**
+   961→   * Check if property exists on object
+   962→   */
+   963→  export function has<T extends Record<string, unknown>>(
+   964→    obj: T,
+   965→    path: string
+   966→  ): boolean {
+   967→    return path.split('.').reduce((current, key) => {
+   968→      return current?.[key as keyof T] !== undefined;
+   969→    }, obj as any);
+   970→  }
+   971→
+   972→  /**
+   973→   * Get nested property from object safely
+   974→   */
+   975→  export function get<T extends Record<string, unknown>, V = unknown>(
+   976→    obj: T,
+   977→    path: string,
+   978→    defaultValue?: V
+   979→  ): V | undefined {
+   980→    try {
+   981→      const value = path.split('.').reduce((current: any, key) => {
+   982→        return current?.[key];
+   983→      }, obj as any);
+   984→
+   985→      return value ?? defaultValue;
+   986→    } catch {
+   987→      return defaultValue;
+   988→    }
+   989→  }
+   990→
+   991→  /**
+   992→   * Set nested property on object
+   993→   */
+   994→  export function set<T extends Record<string, unknown>>(
+   995→    obj: T,
+   996→    path: string,
+   997→    value: unknown
+   998→  ): T {
+   999→    const keys = path.split('.');
+  1000→    const lastKey = keys.pop()!;
+  1001→    
+  1002→    const target = keys.reduce((current: any, key) => {
+  1003→      if (current[key] === undefined) {
+  1004→        current[key] = {};
+  1005→      }
+  1006→      return current[key];
+  1007→    }, obj as any);
+  1008→
+  1009→    target[lastKey] = value;
+  1010→    return obj;
+  1011→  }
+  1012→
+  1013→  /**
+  1014→   * Unset nested property from object
+  1015→   */
+  1016→  export function unset<T extends Record<string, unknown>>(obj: T, path: string): T {
+  1017→    const keys = path.split('.');
+  1018→    const lastKey = keys.pop()!;
+  1019→    
+  1020→    const target = keys.reduce((current: any, key) => {
+  1021→      return current?.[key];
+  1022→    }, obj as any);
+  1023→
+  1024→    if (target) {
+  1025→      delete target[lastKey];
+  1026→    }
+  1027→
+  1028→    return obj;
+  1029→  }
+  1030→
+  1031→  /**
+  1032→   * Flatten nested object to single level
+  1033→   */
+  1034→  export function flatten(obj: Record<string, unknown>, separator = '.'): Record<string, unknown> {
+  1035→    const result: Record<string, unknown> = {};
+  1036→
+  1037→    const recurse = (current: any, prefix: string) => {
+  1038→      for (const [key, value] of Object.entries(current)) {
+  1039→        const newKey = prefix ? `${prefix}${separator}${key}` : key;
+  1040→
+  1041→        if (value && typeof value === 'object' && !Array.isArray(value)) {
+  1042→          recurse(value, newKey);
+  1043→        } else {
+  1044→          result[newKey] = value;
+  1045→        }
+  1046→      }
+  1047→    };
+  1048→
+  1049→    recurse(obj, '');
+  1050→    return result;
+  1051→  }
+  1052→
+  1053→  /**
+  1054→   * Unflatten object with separator to nested structure
+  1055→   */
+  1056→  export function unflatten(obj: Record<string, unknown>, separator = '.'): Record<string, unknown> {
+  1057→    const result: Record<string, unknown> = {};
+  1058→
+  1059→    for (const [key, value] of Object.entries(obj)) {
+  1060→      const keys = key.split(separator);
+  1061→      let current = result;
+  1062→
+  1063→      for (let i = 0; i < keys.length - 1; i++) {
+  1064→        if (!current[keys[i]]) {
+  1065→          current[keys[i]] = {};
+  1066→        }
+  1067→        current = current[keys[i]] as Record<string, unknown>;
+  1068→      }
+  1069→
+  1070→      current[keys[keys.length - 1]] = value;
+  1071→    }
+  1072→
+  1073→    return result;
+  1074→  }
+  1075→
+  1076→  /**
+  1077→   * Filter object by predicate on values
+  1078→   */
+  1079→  export function filter<T extends Record<string, unknown>>(
+  1080→    obj: T,
+  1081→    predicate: (value: T[keyof T], key: string) => boolean
+  1082→  ): Partial<T> {
+  1083→    const result: Partial<T> = {};
+  1084→    
+  1085→    for (const [key, value] of Object.entries(obj)) {
+  1086→      if (predicate(value as T[keyof T], key)) {
+  1087→        result[key as keyof T] = value;
+  1088→      }
+  1089→    }
+  1090→    
+  1091→    return result;
+  1092→  }
+  1093→
+  1094→  /**
+  1095→   * Some - check if some value passes predicate
+  1096→   */
+  1097→  export function some<T extends Record<string, unknown>>(
+  1098→    obj: T,
+  1099→    predicate: (value: T[keyof T]) => boolean
+  1100→  ): boolean {
+  1101→    return Object.values(obj).some(v => predicate(v as T[keyof T]));
+  1102→  }
+  1103→
+  1104→  /**
+  1105→   * Every - check if all values pass predicate
+  1106→   */
+  1107→  export function every<T extends Record<string, unknown>>(
+  1108→    obj: T,
+  1109→    predicate: (value: T[keyof T]) => boolean
+  1110→  ): boolean {
+  1111→    return Object.values(obj).every(v => predicate(v as T[keyof T]));
+  1112→  }
+  1113→
+  1114→  /**
+  1115→   * Reduce object to single value
+  1116→   */
+  1117→  export function reduce<T extends Record<string, unknown>, V>(
+  1118→    obj: T,
+  1119→    reducer: (accumulator: V, value: T[keyof T], key: string) => V,
+  1120→    initialValue: V
+  1121→  ): V {
+  1122→    return Object.entries(obj).reduce(
+  1123→      (acc, [key, value]) => reducer(acc, value as T[keyof T], key),
+  1124→      initialValue
+  1125→    );
+  1126→  }
+  1127→
+  1128→  /**
+  1129→   * Tap into object without modifying it (for debugging)
+  1130→   */
+  1131→  export function tap<T extends Record<string, unknown>>(
+  1132→    obj: T,
+  1133→    interceptor: (obj: T) => void
+  1134→  ): T {
+  1135→    interceptor(obj);
+  1136→    return obj;
+  1137→  }
+  1138→
+  1139→  /**
+  1140→   * Default value for missing properties
+  1141→   */
+  1142→  export function defaults<T extends Record<string, unknown>>(
+  1143→    obj: T,
+  1144→    defaults: Partial<T>
+  1145→  ): T {
+  1146→    const result = { ...defaults };
+  1147→    
+  1148→    for (const [key, value] of Object.entries(obj)) {
+  1149→      if (value !== undefined && value !== null) {
+  1150→        (result as any)[key] = value;
+  1151→      }
+  1152→    }
+  1153→    
+  1154→    return result as T;
+  1155→  }
+  1156→}
+  1157→
+  1158→// ============== Validation Utilities ==============
+  1159→
+  1160→export namespace ValidationUtils {
+  1161→  /**
+  1162→   * Validate required fields
+  1163→   */
+  1164→  export function required(
+  1165→    data: Record<string, unknown>,
+  1166→    fields: string[]
+  1167→  ): { valid: boolean; errors: Record<string, string> } {
+  1168→    const errors: Record<string, string> = {};
+  1169→
+  1170→    for (const field of fields) {
+  1171→      if (!data[field] || data[field] === '') {
+  1172→        errors[field] = `${field} is required`;
+  1173→      }
+  1174→    }
+  1175→
+  1176→    return {
+  1177→      valid: Object.keys(errors).length === 0,
+  1178→      errors,
+  1179→    };
+  1180→  }
+  1181→
+  1182→  /**
+  1183→   * Validate email field
+  1184→   */
+  1185→  export function email(
+  1186→    data: Record<string, unknown>,
+  1187→    field: string
+  1188→  ): { valid: boolean; error?: string } {
+  1189→    const value = data[field];
+  1190→
+  1191→    if (!value || value === '') {
+  1192→      return { valid: false, error: `${field} is required` };
+  1193→    }
+  1194→
+  1195→    if (!StringUtils.isValidEmail(String(value))) {
+  1196→      return { valid: false, error: `Invalid email address` };
+  1197→    }
+  1198→
+  1199→    return { valid: true };
+  1200→  }
+  1201→
+  1202→  /**
+  1203→   * Validate phone field
+  1204→   */
+  1205→  export function phone(
+  1206→    data: Record<string, unknown>,
+  1207→    field: string
+  1208→  ): { valid: boolean; error?: string } {
+  1209→    const value = data[field];
+  1210→
+  1211→    if (!value || value === '') {
+  1212→      return { valid: false, error: `${field} is required` };
+  1213→    }
+  1214→
+  1215→    if (!StringUtils.isValidPhone(String(value))) {
+  1216→      return { valid: false, error: `Invalid phone number` };
+  1217→    }
+  1218→
+  1219→    return { valid: true };
+  1220→  }
+  1221→
+  1222→  /**
+  1223→   * Validate minimum length
+  1224→   */
+  1225→  export function minLength(
+  1226→    data: Record<string, unknown>,
+  1227→    field: string,
+  1228→    min: number
+  1229→  ): { valid: boolean; error?: string } {
+  1230→    const value = String(data[field] || '');
+  1231→
+  1232→    if (value.length < min) {
+  1233→      return {
+  1234→        valid: false,
+  1235→        error: `${field} must be at least ${min} characters`,
+  1236→      };
+  1237→    }
+  1238→
+  1239→    return { valid: true };
+  1240→  }
+  1241→
+  1242→  /**
+  1243→   * Validate maximum length
+  1244→   */
+  1245→  export function maxLength(
+  1246→    data: Record<string, unknown>,
+  1247→    field: string,
+  1248→    max: number
+  1249→  ): { valid: boolean; error?: string } {
+  1250→    const value = String(data[field] || '');
+  1251→
+  1252→    if (value.length > max) {
+  1253→      return {
+  1254→        valid: false,
+  1255→        error: `${field} must be no more than ${max} characters`,
+  1256→      };
+  1257→    }
+  1258→
+  1259→    return { valid: true };
+  1260→  }
+  1261→
+  1262→  /**
+  1263→   * Validate numeric range
+  1264→   */
+  1265→  export function range(
+  1266→    data: Record<string, unknown>,
+  1267→    field: string,
+  1268→    min: number,
+  1269→    max: number
+  1270→  ): { valid: boolean; error?: string } {
+  1271→    const value = NumberUtils.parseSafe(data[field]);
+  1272→
+  1273→    if (isNaN(value)) {
+  1274→      return { valid: false, error: `${field} must be a number` };
+  1275→    }
+  1276→
+  1277→    if (value < min || value > max) {
+  1278→      return {
+  1279→        valid: false,
+  1280→        error: `${field} must be between ${min} and ${max}`,
+  1281→      };
+  1282→    }
+  1283→
+  1284→    return { valid: true };
+  1285→  }
+  1286→
+  1287→  /**
+  1288→   * Validate pattern (regex)
+  1289→   */
+  1290→  export function pattern(
+  1291→    data: Record<string, unknown>,
+  1292→    field: string,
+  1293→    regex: RegExp,
+  1294→    message?: string
+  1295→  ): { valid: boolean; error?: string } {
+  1296→    const value = String(data[field] || '');
+  1297→
+  1298→    if (!regex.test(value)) {
+  1299→      return {
+  1300→        valid: false,
+  1301→        error: message || `${field} format is invalid`,
+  1302→      };
+  1303→    }
+  1304→
+  1305→    return { valid: true };
+  1306→  }
+  1307→
+  1308→  /**
+  1309→   * Validate enum value
+  1310→   */
+  1311→  export function enumValue<T>(
+  1312→    data: Record<string, unknown>,
+  1313→    field: string,
+  1314→    allowedValues: T[]
+  1315→  ): { valid: boolean; error?: string } {
+  1316→    const value = data[field];
+  1317→
+  1318→    if (!allowedValues.includes(value as T)) {
+  1319→      return {
+  1320→        valid: false,
+  1321→        error: `${field} must be one of: ${allowedValues.join(', ')}`,
+  1322→      };
+  1323→    }
+  1324→
+  1325→    return { valid: true };
+  1326→  }
+  1327→
+  1328→  /**
+  1329→   * Validate URL
+  1330→   */
+  1331→  export function url(
+  1332→    data: Record<string, unknown>,
+  1333→    field: string
+  1334→  ): { valid: boolean; error?: string } {
+  1335→    const value = String(data[field] || '');
+  1336→
+  1337→    try {
+  1338→      new URL(value);
+  1339→      return { valid: true };
+  1340→    } catch {
+  1341→      return { valid: false, error: `Invalid URL format` };
+  1342→    }
+  1343→  }
+  1344→
+  1345→  /**
+  1346→   * Validate date
+  1347→   */
+  1348→  export function date(
+  1349→    data: Record<string, unknown>,
+  1350→    field: string
+  1351→  ): { valid: boolean; error?: string } {
+  1352→    const value = data[field];
+  1353→
+  1354→    if (!value) {
+  1355→      return { valid: false, error: `${field} is required` };
+  1356→    }
+  1357→
+  1358→    const date = new Date(value as string | number);
+  1359→    if (isNaN(date.getTime())) {
+  1360→      return { valid: false, error: `Invalid date format` };
+  1361→    }
+  1362→
+  1363→    return { valid: true };
+  1364→  }
+  1365→
+  1366→  /**
+  1367→   * Run multiple validations
+  1368→   */
+  1369→  export async function validateAll(
+  1370→    data: Record<string, unknown>,
+  1371→    validations: Array<{ valid: boolean; error?: string }>
+  1372→  ): Promise<{ valid: boolean; errors: Record<string, string> }> {
+  1373→    const errors: Record<string, string> = {};
+  1374→
+  1375→    for (const validation of validations) {
+  1376→      if (!validation.valid && validation.error) {
+  1377→        // Extract field name from error message
+  1378→        const fieldMatch = validation.error.match(/^(\w+)/);
+  1379→        if (fieldMatch) {
+  1380→          errors[fieldMatch[1]] = validation.error;
+  1381→        }
+  1382→      }
+  1383→    }
+  1384→
+  1385→    return {
+  1386→      valid: Object.keys(errors).length === 0,
+  1387→      errors,
+  1388→    };
+  1389→  }
+  1390→}
+  1391→
+  1392→// ============== ID Generation Utilities ==============
+  1393→
+  1394→export namespace IdUtils {
+  1395→  /**
+  1396→   * Generate UUID v4
+  1397→   */
+  1398→  export function uuid(): string {
+  1399→    return crypto.randomUUID();
+  1400→  }
+  1401→
+  1402→  /**
+  1403→   * Generate short ID (16 chars)
+  1404→   */
+  1405→  export function shortId(): string {
+  1406→    return `id_${Date.now().toString(36)}_${StringUtils.random(8)}`;
+  1407→  }
+  1408→
+  1409→  /**
+  1410→   * Generate transaction reference
+  1411→   */
+  1412→  export function txnRef(): string {
+  1413→    const timestamp = Date.now().toString(36).toUpperCase();
+  1414→    const random = StringUtils.random(6).toUpperCase();
+  1415→    return `SSM_${timestamp}_${random}`;
+  1416→  }
+  1417→
+  1418→  /**
+  1419→   * Generate order number
+  1420→   */
+  1421→  export function orderNo(): string {
+  1422→    const date = new Date();
+  1423→    const datePart = date.getFullYear().toString().slice(-2) +
+  1424→      String(date.getMonth() + 1).padStart(2, '0') +
+  1425→      String(date.getDate()).padStart(2, '0');
+  1426→    const random = StringUtils.random(6);
+  1427→    return `ORD-${datePart}-${random}`;
+  1428→  }
+  1429→
+  1430→  /**
+  1431→   * Generate invoice number
+  1432→   */
+  1433→  export function invoiceNo(): string {
+  1434→    const date = new Date();
+  1435→    const year = date.getFullYear();
+  1436→    const month = String(date.getMonth() + 1).padStart(2, '0');
+  1437→    const seq = StringUtils.random(5, '0123456789');
+  1438→    return `INV-${year}-${month}-${seq}`;
+  1439→  }
+  1440→
+  1441→  /**
+  1442→   * Generate session token
+  1443→   */
+  1444→  export function sessionToken(): string {
+  1445→    const header = Buffer.from(StringUtils.random(16)).toString('base64url');
+  1446→    const payload = Buffer.from(`${Date.now()}-${StringUtils.random(32)}`).toString('base64url');
+  1447→    const signature = StringUtils.random(32);
+  1448→    return `${header}.${payload}.${signature}`;
+  1449→  }
+  1450→
+  1451→  /**
+  1452→   * Generate API key
+  1453→   */
+  1454→  export function apiKey(prefix: string = 'sk'): string {
+  1455→    const timestamp = Date.now().toString(36);
+  1456→    const random = StringUtils.random(48, 'abcdefghijklmnopqrstuvwxyz0123456789');
+  1457→    return `${prefix}_${timestamp}_${random}`;
+  1458→  }
+  1459→
+  1460→  /**
+  1461→   * Generate webhook secret
+  1462→   */
+  1463→  export function webhookSecret(): string {
+  1464→    return `whsec_${StringUtils.random(64)}`;
+  1465→  }
+  1466→
+  1467→  /**
+  1468→   * Generate verification code
+  1469→   */
+  1470→  export function verificationCode(length: number = 6): string {
+  1471→    return StringUtils.random(length, '0123456789');
+  1472→  }
+  1473→
+  1474→  /**
+  1475→   * Generate OTP (One-Time Password)
+  1476→   */
+  1477→  export function otp(): string {
+  1478→    return verificationCode(6);
+  1479→  }
+  1480→
+  1481→  /**
+  1482→   * Generate reference code (alphanumeric)
+  1483→   */
+  1484→  export function refCode(length: number = 8): string {
+  1485→    return StringUtils.random(length, 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789');
+  1486→  }
+  1487→}
+  1488→
+  1489→// ============== Export All Utilities ==============
+  1490→
+  1491→export {
+  1492→  StringUtils,
+  1493→  NumberUtils,
+  1494→  DateUtils,
+  1495→  ArrayUtils,
+  1496→  ObjectUtils,
+  1497→  ValidationUtils,
+  1498→  IdUtils,
+  1499→};
+  1500→
+  1501→export default {
+  1502→  StringUtils,
+  1503→  NumberUtils,
+  1504→  DateUtils,
+  1505→  ArrayUtils,
+  1506→  ObjectUtils,
+  1507→  ValidationUtils,
+  1508→  IdUtils,
+  1509→};
+  1510→

@@ -1,0 +1,1683 @@
+     1→     1→/**
+     2→     2→ * Machine Learning Pipeline Orchestrator for SSM-Pay
+     3→     3→ * 
+     4→     4→ * @module ml/pipeline
+     5→     5→ * @description Comprehensive pipeline system for combining multiple ML models,
+     6→     6→ * supporting sequential and parallel execution, result aggregation, ensemble methods,
+     7→     7→ * and A/B testing for model comparison.
+     8→     8→ * 
+     9→     9→ * @features
+    10→    10→ * - Sequential and parallel model execution modes
+    11→    11→ * - DAG-based dependency resolution for complex pipelines
+    12→    12→ * - Multiple aggregation strategies (voting, averaging, stacking)
+    13→    13→ * - Built-in retry mechanism with exponential backoff
+    14→    14→ * - Result caching with configurable TTL
+    15→    15→ * - A/B testing framework for model comparison
+    16→    16→ * - Fallback chain support for high availability
+    17→    17→ * - Comprehensive logging and metrics collection
+    18→    18→ * 
+    19→    19→ * @example
+    20→    20→ * ```typescript
+    21→    21→ * import { MLPipeline } from '@/lib/ml/pipeline';
+    22→    22→ * 
+    23→    23→ * const pipeline = new MLPipeline({
+    24→    24→ *   id: 'fraud-detection-pipeline',
+    25→    25→ *   name: 'Fraud Detection Pipeline',
+    26→    26→ *   mode: PipelineMode.PARALLEL,
+    27→    27→ *   models: [
+    28→    28→ *     { modelId: 'fraud-detector', enabled: true, weight: 0.4, priority: 1 },
+    29→    29→ *     { modelId: 'anomaly-detector', enabled: true, weight: 0.35, priority: 2 },
+    30→    30→ *     { modelId: 'risk-engine', enabled: true, weight: 0.25, priority: 3 },
+    31→    31→ *   ],
+    32→    32→ *   // ... other config
+    33→    33→ * });
+    34→    34→ * 
+    35→    35→ * const result = await pipeline.execute(transactionData);
+    36→    36→ * ```
+    37→    37→ * 
+    38→    38→ * @version 2.0.0
+    39→    39→ * @since 2.0.0
+    40→    40→ * @author SSM-Pay ML Engineering Team
+    41→    41→ */
+    42→    42→
+    43→    43→import { logger } from '@/lib/logger';
+    44→    44→import {
+    45→    45→  BasePredictionResult,
+    46→    46→  PredictionError,
+    47→    47→  AggregatedResult,
+    48→    48→  AggregationMethod,
+    49→    49→  DisagreementDetail,
+    50→    50→  PipelineConfig,
+    51→    51→  PipelineMode,
+    52→    52→  PipelineModelConfig,
+    53→    53→  AggregationConfig,
+    54→    54→  RetryConfig,
+    55→    55→  CachingConfig,
+    56→    56→  ABTestingConfig,
+    57→    57→  ABTestResults,
+    58→    58→  ABTestGroupResult,
+    59→    59→  PipelineResult,
+    60→    60→  PipelineExecutionMetadata,
+    61→    61→  ModelMetadata,
+    62→    62→} from './types';
+    63→    63→import { generateHash, MLCache } from './utils';
+    64→    64→
+    65→    65→// ============== Model Interface ==============
+    66→    66→
+    67→    67→/**
+    68→    68→ * Interface that all ML models must implement to be used in the pipeline
+    69→    69→ */
+    70→    70→export interface MLPredictor {
+    71→    71→  /** Unique model identifier */
+    72→    72→  readonly id: string;
+    73→    73→  /** Model metadata */
+    74→    74→  readonly metadata: ModelMetadata;
+    75→    75→  
+    76→    76→  /**
+    77→    77→   * Execute prediction on input data
+    78→    78→   * @param input - Input data for prediction
+    79→    79→   * @returns Prediction result
+    80→    80→   */
+    81→    81→  predict(input: unknown): Promise<BasePredictionResult>;
+    82→    82→  
+    83→    83→  /**
+    84→    84→   * Check if model is available for predictions
+    85→    85→   */
+    86→    86→  isAvailable(): boolean;
+    87→    87→  
+    88→    88→  /**
+    89→    89→   * Get current model health status
+    90→    90→   */
+    91→    91→  getHealth(): ModelHealthStatus;
+    92→    92→}
+    93→    93→
+    94→    94→/**
+    95→    95→ * Health status of a model
+    96→    96→ */
+    97→    97→export interface ModelHealthStatus {
+    98→    98→  /** Whether model is healthy */
+    99→    99→  isHealthy: boolean;
+   100→   100→  /** Last prediction timestamp */
+   101→   101→  lastPredictionAt?: Date;
+   102→   102→  /** Average response time in ms */
+   103→   103→  avgResponseTimeMs: number;
+   104→   104→  /** Error rate (0-1) */
+   105→   105→  errorRate: number;
+   106→   106→  /** Number of predictions made */
+   107→   107→  totalPredictions: number;
+   108→   108→  /** Additional health info */
+   109→   109→  details?: Record<string, unknown>;
+   110→   110→}
+   111→   111→
+   112→   112→// ============== Pipeline Events ==============
+   113→   113→
+   114→   114→/**
+   115→   115→ * Event types emitted by the pipeline
+   116→   116→ */
+   117→   117→export enum PipelineEventType {
+   118→   118→  /** Execution started */
+   119→   119→  EXECUTION_STARTED = 'execution_started',
+   120→   120→  /** Execution completed */
+   121→   121→  EXECUTION_COMPLETED = 'execution_completed',
+   122→   122→  /** Execution failed */
+   123→   123→  EXECUTION_FAILED = 'execution_failed',
+   124→   124→  /** Individual model started */
+   125→   125→  MODEL_STARTED = 'model_started',
+   126→   126→  /** Individual model completed */
+   127→   127→  MODEL_COMPLETED = 'model_completed',
+   128→   128→  /** Individual model failed */
+   129→   129→  MODEL_FAILED = 'model_failed',
+   130→   130→  /** Model retry attempted */
+   131→   131→  MODEL_RETRY = 'model_retry',
+   132→   132→  /** Cache hit */
+   133→   133→  CACHE_HIT = 'cache_hit',
+   134→   134→  /** Cache miss */
+   135→   135→  CACHE_MISS = 'cache_miss',
+   136→   136→  /** A/B test group assigned */
+   137→   137→  AB_GROUP_ASSIGNED = 'ab_group_assigned',
+   138→   138→}
+   139→   139→
+   140→   140→/**
+   141→   141→ * Pipeline event payload
+   142→   142→ */
+   143→   143→export interface PipelineEvent<T = unknown> {
+   144→   144→  type: PipelineEventType;
+   145→   145→  timestamp: Date;
+   146→   146→  data: T;
+   147→   147→  pipelineId: string;
+   148→   148→  executionId?: string;
+   149→   149→}
+   150→   150→
+   151→   151→/** Event listener callback type */
+   152→   152→export type PipelineEventListener<T = unknown> = (event: PipelineEvent<T>) => void;
+   153→   153→
+   154→   154→// ============== Pipeline Orchestrator Class ==============
+   155→   155→
+   156→   156→/**
+   157→   157→ * Main ML Pipeline orchestrator class
+   158→   158→ * 
+   159→   159→ * Combines multiple ML models into a unified prediction pipeline with
+   160→   160→ * configurable execution modes, aggregation strategies, and monitoring.
+   161→   161→ */
+   162→   162→export class MLPipeline {
+   163→   163→  /** Pipeline configuration */
+   164→   164→  private config: PipelineConfig;
+   165→   165→  
+   166→   166→  /** Registered models map */
+   167→   167→  private models: Map<string, MLPredictor> = new Map();
+   168→   168→  
+   169→   169→  /** Result cache */
+   170→   170→  private cache: MLCache<AggregatedResult>;
+   171→   171→  
+   172→   172→  /** Event listeners */
+   173→   173→  private listeners: Map<PipelineEventType, Set<PipelineEventListener>> = new Map();
+   174→   174→  
+   175→   175→  /** Metrics collector */
+   176→   176→  private metrics: PipelineMetrics;
+   177→   177→  
+   178→   178→  /** A/B test state tracker */
+   179→   179→  private abTestState: ABTestState | null = null;
+   180→   180→
+   181→   181→  constructor(config: PipelineConfig) {
+   182→   182→    this.config = this.validateConfig(config);
+   183→   183→    this.cache = new MLCache(
+   184→   184→      config.caching.maxSize,
+   185→   185→      config.caching.ttlMs
+   186→   186→    );
+   187→   187→    this.metrics = new PipelineMetrics();
+   188→   188→    
+   189→   189→    logger.info(`MLPipeline initialized: ${config.name} (${config.id})`);
+   190→   190→    
+   191→   191→    if (config.abTesting?.enabled) {
+   192→   192→      this.initializeABTest(config.abTesting);
+   193→   193→    }
+   194→   194→  }
+   195→   195→
+   196→   196→  // ============== Configuration ==============
+   197→   197→
+   198→   198→  /**
+   199→   199→   * Validate and normalize pipeline configuration
+   200→   200→   */
+   201→   201→  private validateConfig(config: PipelineConfig): PipelineConfig {
+   202→   202→    // Validate required fields
+   203→   203→    if (!config.id || !config.name) {
+   204→   204→      throw new Error('Pipeline ID and name are required');
+   205→   205→    }
+   206→   206→
+   207→   207→    if (!config.models || config.models.length === 0) {
+   208→   208→      throw new Error('At least one model must be configured');
+   209→   209→    }
+   210→   210→
+   211→   211→    // Validate weights sum to ~1 for weighted methods
+   212→   212→    const enabledModels = config.models.filter((m) => m.enabled);
+   213→   213→    const totalWeight = enabledModels.reduce((sum, m) => sum + m.weight, 0);
+   214→   214→    
+   215→   215→    if (
+   216→   216→      [AggregationMethod.WEIGHTED_VOTE, AggregationMethod.WEIGHTED_AVERAGE].includes(
+   217→   217→        config.aggregation.method
+   218→   218→      ) &&
+   219→   219→      Math.abs(totalWeight - 1.0) > 0.01
+   220→   220→    ) {
+   221→   221→      logger.warn(
+   222→   222→        `Model weights (${totalWeight}) do not sum to 1.0. Weights will be normalized.`
+   223→   223→      );
+   224→   224→    }
+   225→   225→
+   226→   226→    // Set defaults
+   227→   227→    return {
+   228→   228→      ...config,
+   229→   229→      timeout: {
+   230→   230→        perModelMs: config.timeout?.perModelMs ?? 5000,
+   231→   231→        totalMs: config.timeout?.totalMs ?? 30000,
+   232→   232→      },
+   233→   233→      retry: {
+   234→   234→        enabled: config.retry?.enabled ?? true,
+   235→   235→        maxAttempts: config.retry?.maxAttempts ?? 3,
+   236→   236→        initialDelayMs: config.retry?.initialDelayMs ?? 100,
+   237→   237→        backoffMultiplier: config.retry?.backoffMultiplier ?? 2,
+   238→   238→        maxDelayMs: config.retry?.maxDelayMs ?? 5000,
+   239→   239→        retryableErrors: config.retry?.retryableErrors ?? ['timeout', 'network_error'],
+   240→   240→      },
+   241→   241→      caching: {
+   242→   242→        enabled: config.caching?.enabled ?? true,
+   243→   243→        ttlMs: config.caching?.ttlMs ?? 300000,
+   244→   244→        maxSize: config.caching?.maxSize ?? 1000,
+   245→   245→        keyStrategy: config.caching?.keyStrategy ?? 'hash',
+   246→   246→      },
+   247→   247→      logLevel: config.logLevel ?? 'info',
+   248→   248→    };
+   249→   249→  }
+   250→   250→
+   251→   251→  /**
+   252→   252→   * Get current pipeline configuration (read-only copy)
+   253→   253→   */
+   254→   254→  getConfiguration(): Readonly<PipelineConfig> {
+   255→   255→    return { ...this.config };
+   256→   256→  }
+   257→   257→
+   258→   258→  // ============== Model Registration ==============
+   259→   259→
+   260→   260→  /**
+   261→   261→   * Register a model with the pipeline
+   262→   262→   * 
+   263→   263→   * @param model - The ML predictor to register
+   264→   264→   * @throws Error if model ID is already registered or not in config
+   265→   265→   */
+   266→   266→  registerModel(model: MLPredictor): void {
+   267→   267→    const modelConfig = this.config.models.find((m) => m.modelId === model.id);
+   268→   268→    
+   269→   269→    if (!modelConfig) {
+   270→   270→      throw new Error(
+   271→   271→        `Model '${model.id}' is not in pipeline configuration. Add it to models array first.`
+   272→   272→      );
+   273→   273→    }
+   274→   274→
+   275→   275→    if (this.models.has(model.id)) {
+   276→   276→      throw new Error(`Model '${model.id}' is already registered`);
+   277→   277→    }
+   278→   278→
+   279→   279→    this.models.set(model.id, model);
+   280→   280→    logger.info(`Model registered: ${model.id} (${model.metadata.name})`);
+   281→   281→  }
+   282→   282→
+   283→   283→  /**
+   284→   284→   * Unregister a model from the pipeline
+   285→   285→   * 
+   286→   286→   * @param modelId - ID of model to unregister
+   287→   287→   */
+   288→   288→  unregisterModel(modelId: string): void {
+   289→   289→    if (this.models.delete(modelId)) {
+   290→   290→      logger.info(`Model unregistered: ${modelId}`);
+   291→   291→    }
+   292→   292→  }
+   293→   293→
+   294→   294→  /**
+   295→   295→   * Get registered model by ID
+   296→   296→   */
+   297→   297→  getModel(modelId: string): MLPredictor | undefined {
+   298→   298→    return this.models.get(modelId);
+   299→   299→  }
+   300→   300→
+   301→   301→  /**
+   302→   302→   * Get list of all registered model IDs
+   303→   303→   */
+   304→   304→  getRegisteredModelIds(): string[] {
+   305→   305→    return Array.from(this.models.keys());
+   306→   306→  }
+   307→   307→
+   308→   308→  /**
+   309→   309→   * Check if a model is registered and available
+   310→   310→   */
+   311→   311→  isModelAvailable(modelId: string): boolean {
+   312→   312→    const model = this.models.get(modelId);
+   313→   313→    return model ? model.isAvailable() : false;
+   314→   314→  }
+   315→   315→
+   316→   316→  // ============== Event System ==============
+   317→   317→
+   318→   318→  /**
+   319→   319→   * Subscribe to pipeline events
+   320→   320→   * 
+   321→   321→   * @param eventType - Type of event to listen for
+   322→   322→   * @param listener - Callback function
+   323→   323→   * @returns Unsubscribe function
+   324→   324→   */
+   325→   325→  on<T = unknown>(
+   326→   326→    eventType: PipelineEventType,
+   327→   327→    listener: PipelineEventListener<T>
+   328→   328→  ): () => void {
+   329→   329→    if (!this.listeners.has(eventType)) {
+   330→   330→      this.listeners.set(eventType, new Set());
+   331→   331→    }
+   332→   332→    
+   333→   333→    this.listeners.get(eventType)!.add(listener as PipelineEventListener);
+   334→   334→    
+   335→   335→    // Return unsubscribe function
+   336→   336→    return () => {
+   337→   337→      this.listeners.get(eventType)?.delete(listener as PipelineEventListener);
+   338→   338→    };
+   339→   339→  }
+   340→   340→
+   341→   341→  /**
+   342→   342→   * Emit an event to all listeners
+   343→   343→   */
+   344→   344→  private emit<T>(type: PipelineEventType, data: T, executionId?: string): void {
+   345→   345→    const event: PipelineEvent<T> = {
+   346→   346→      type,
+   347→   347→      timestamp: new Date(),
+   348→   348→      data,
+   349→   349→      pipelineId: this.config.id,
+   350→   350→      executionId,
+   351→   351→    };
+   352→   352→
+   353→   353→    const listeners = this.listeners.get(type);
+   354→   354→    if (listeners) {
+   355→   355→      for (const listener of listeners) {
+   356→   356→        try {
+   357→   357→          listener(event as PipelineEvent);
+   358→   358→        } catch (error) {
+   359→   359→          logger.error(`Event listener error for ${type}:`, error);
+   360→   360→        }
+   361→   361→      }
+   362→   362→    }
+   363→   363→  }
+   364→   364→
+   365→   365→  // ============== Main Execution ==============
+   366→   366→
+   367→   367→  /**
+   368→   368→   * Execute the pipeline on input data
+   369→   369→   * 
+   370→   370→   * This is the main entry point for running predictions through
+   371→   371→   * the configured ML models.
+   372→   372→   * 
+   373→   373→   * @param input - Input data for prediction
+   374→   374→   * @param options - Optional execution options override
+   375→   375→   * @returns Complete pipeline result with individual and aggregated results
+   376→   376→   * 
+   377→   377→   * @example
+   378→   378→   * ```typescript
+   379→   379→   * const result = await pipeline.execute({
+   380→   380→   *   amount: 1000,
+   381→   381→   *   userId: 'user_123',
+   382→   382→   *   // ... transaction features
+   383→   383→   * });
+   384→   384→   * 
+   385→   385→   * console.log(result.aggregatedResult.finalPrediction);
+   386→   386→   * console.log(result.aggregatedResult.confidence);
+   387→   387→   * ```
+   388→   388→   */
+   389→   389→  async execute(
+   390→   390→    input: unknown,
+   391→   391→    options?: Partial<PipelineConfig>
+   392→   392→  ): Promise<PipelineResult> {
+   393→   393→    const executionId = this.generateExecutionId();
+   394→   394→    const startTime = Date.now();
+   395→   395→
+   396→   396→    // Merge options with base config if provided
+   397→   397→    const effectiveConfig = options
+   398→   398→      ? { ...this.config, ...options }
+   399→   399→      : this.config;
+   400→   400→
+   401→   401→    this.emit(PipelineEventType.EXECUTION_STARTED, { input }, executionId);
+   402→   402→
+   403→   403→    // Check cache first
+   404→   404→    if (effectiveConfig.caching.enabled) {
+   405→   405→      const cacheKey = this.generateCacheKey(input);
+   406→   406→      const cached = this.cache.get(cacheKey);
+   407→   407→      
+   408→   408→      if (cached) {
+   409→   409→        this.emit(PipelineEventType.CACHE_HIT, { cacheKey }, executionId);
+   410→   410→        
+   411→   411→        return this.createCachedResult(
+   412→   412→          cached,
+   413→   413→          executionId,
+   414→   414→          startTime,
+   415→   415→          cacheKey
+   416→   416→        );
+   417→   417→      }
+   418→   418→      
+   419→   419→      this.emit(PipelineEventType.CACHE_MISS, { cacheKey }, executionId);
+   420→   420→    }
+   421→   421→
+   422→   422→    try {
+   423→   423→      // Handle A/B testing if enabled
+   424→   424→      if (effectiveConfig.abTesting?.enabled && this.abTestState) {
+   425→   425→        return await this.executeWithABTesting(
+   426→   426→          input,
+   427→   427→          effectiveConfig,
+   428→   428→          executionId,
+   429→   429→          startTime
+   430→   430→        );
+   431→   431→      }
+   432→   432→
+   433→   433→      // Execute based on mode
+   434→   434→      let modelResults: Map<string, BasePredictionResult>;
+   435→   435→
+   436→   436→      switch (effectiveConfig.mode) {
+   437→   437→        case PipelineMode.SEQUENTIAL:
+   438→   438→          modelResults = await this.executeSequential(
+   439→   439→            input,
+   440→   440→            effectiveConfig,
+   441→   441→            executionId
+   442→   442→          );
+   443→   443→          break;
+   444→   444→        case PipelineMode.PARALLEL:
+   445→   445→          modelResults = await this.executeParallel(
+   446→   446→            input,
+   447→   447→            effectiveConfig,
+   448→   448→            executionId
+   449→   449→          );
+   450→   450→          break;
+   451→   451→        case PipelineMode.DAG:
+   452→   452→          modelResults = await this.executeDAG(
+   453→   453→            input,
+   454→   454→            effectiveConfig,
+   455→   455→            executionId
+   456→   456→          );
+   457→   457→          break;
+   458→   458→        case PipelineMode.FALLBACK_CHAIN:
+   459→   459→          modelResults = await this.executeFallbackChain(
+   460→   460→            input,
+   461→   461→            effectiveConfig,
+   462→   462→            executionId
+   463→   463→          );
+   464→   464→          break;
+   465→   465→        default:
+   466→   466→          throw new Error(`Unknown pipeline mode: ${effectiveConfig.mode}`);
+   467→   467→      }
+   468→   468→
+   469→   469→      // Aggregate results
+   470→   470→      const aggregatedResult = this.aggregateResults(
+   471→   471→        modelResults,
+   472→   472→        effectiveConfig.aggregation
+   473→   473→      );
+   474→   474→
+   475→   475→      // Update metrics
+   476→   476→      this.metrics.recordExecution(Date.now() - startTime, true);
+   477→   477→
+   478→   478→      // Cache result
+   479→   479→      if (effectiveConfig.caching.enabled) {
+   480→   480→        const cacheKey = this.generateCacheKey(input);
+   481→   481→        this.cache.set(cacheKey, aggregatedResult);
+   482→   482→      }
+   483→   483→
+   484→   484→      const result: PipelineResult = {
+   485→   485→        executionId,
+   486→   486→        pipelineId: effectiveConfig.id,
+   487→   487→        startedAt: new Date(startTime),
+   488→   488→        completedAt: new Date(),
+   489→   489→        totalDurationMs: Date.now() - startTime,
+   490→   490→        success: true,
+   491→   491→        modelResults,
+   492→   492→        aggregatedResult,
+   493→   493→        metadata: this.buildMetadata(executionId, modelResults, false, effectiveConfig.mode),
+   494→   494→      };
+   495→   495→
+   496→   496→      this.emit(PipelineEventType.EXECUTION_COMPLETED, result, executionId);
+   497→   497→
+   498→   498→      return result;
+   499→   499→    } catch (error) {
+   500→   500→      this.metrics.recordExecution(Date.now() - startTime, false);
+   501→   501→      
+   502→   502→      const errorResult: PipelineResult = {
+   503→   503→        executionId,
+   504→   504→        pipelineId: effectiveConfig.id,
+   505→   505→        startedAt: new Date(startTime),
+   506→   506→        completedAt: new Date(),
+   507→   507→        totalDurationMs: Date.now() - startTime,
+   508→   508→        success: false,
+   509→   509→        modelResults: new Map(),
+   510→   510→        aggregatedResult: this.createErrorAggregatedResult(error),
+   511→   511→        metadata: this.buildMetadata(executionId, new Map(), true, effectiveConfig.mode),
+   512→   512→      };
+   513→   513→
+   514→   514→      this.emit(PipelineEventType.EXECUTION_FAILED, { error }, executionId);
+   515→   515→      
+   516→   516→      logger.error(`Pipeline execution failed: ${executionId}`, error);
+   517→   517→      
+   518→   518→      throw error;
+   519→   519→    }
+   520→   520→  }
+   521→   521→
+   522→   522→  // ============== Execution Strategies ==============
+   523→   523→
+   524→   524→  /**
+   525→   525→   * Execute models sequentially in priority order
+   526→   526→   */
+   527→   527→  private async executeSequential(
+   528→   528→    input: unknown,
+   529→   529→    config: PipelineConfig,
+   530→   530→    executionId: string
+   531→   531→  ): Promise<Map<string, BasePredictionResult>> {
+   532→   532→    const results = new Map<string, BasePredictionResult>();
+   533→   533→    const sortedModels = this.getSortedModels(config);
+   534→   534→
+   535→   535→    for (const modelConfig of sortedModels) {
+   536→   536→      if (!modelConfig.enabled) continue;
+   537→   537→
+   538→   538→      const result = await this.executeModelWithRetry(
+   539→   539→        modelConfig.modelId,
+   540→   540→        input,
+   541→   541→        config,
+   542→   542→        executionId
+   543→   543→      );
+   544→   544→
+   545→   545→      results.set(modelConfig.modelId, result);
+   546→   546→
+   547→   547→      // In sequential mode, check if we should stop early
+   548→   548→      // e.g., if fraud detected with high confidence
+   549→   549→      if (this.shouldStopEarly(result, config)) {
+   550→   550→        logger.debug(
+   551→   551→          `Early stopping after ${modelConfig.modelId} due to high-confidence result`
+   552→   552→        );
+   553→   553→        break;
+   554→   554→      }
+   555→   555→    }
+   556→   556→
+   557→   557→    return results;
+   558→   558→  }
+   559→   559→
+   560→   560→  /**
+   561→   561→   * Execute all models in parallel
+   562→   562→   */
+   563→   563→  private async executeParallel(
+   564→   564→    input: unknown,
+   565→   565→    config: PipelineConfig,
+   566→   566→    executionId: string
+   567→   567→  ): Promise<Map<string, BasePredictionResult>> {
+   568→   568→    const results = new Map<string, BasePredictionResult>();
+   569→   569→    const enabledModels = config.models.filter((m) => m.enabled);
+   570→   570→
+   571→   571→    // Create promises for all models
+   572→   572→    const promises = enabledModels.map(async (modelConfig) => {
+   573→   573→      const result = await this.executeModelWithRetry(
+   574→   574→        modelConfig.modelId,
+   575→   575→        input,
+   576→   576→        config,
+   577→   577→        executionId
+   578→   578→      );
+   579→   579→      return { modelId: modelConfig.modelId, result };
+   580→   580→    });
+   581→   581→
+   582→   582→    // Execute with overall timeout
+   583→   583→    const timeoutPromise = new Promise<never>((_, reject) => {
+   584→   584→      setTimeout(() => reject(new Error('Pipeline execution timeout')), config.timeout.totalMs);
+   585→   585→    });
+   586→   586→
+   587→   587→    const settledResults = await Promise.race([
+   588→   588→      Promise.allSettled(promises),
+   589→   589→      timeoutPromise,
+   590→   590→    ]);
+   591→   591→
+   592→   592→    // Process results
+   593→   593→    if (Array.isArray(settledResults)) {
+   594→   594→      for (const settled of settledResults) {
+   595→   595→        if (settled.status === 'fulfilled') {
+   596→   596→          results.set(settled.value.modelId, settled.value.result);
+   597→   597→        } else {
+   598→   598→          logger.error(`Model execution failed: ${settled.reason}`);
+   599→   599→        }
+   600→   600→      }
+   601→   601→    }
+   602→   602→
+   603→   603→    return results;
+   604→   604→  }
+   605→   605→
+   606→   606→  /**
+   607→   607→   * Execute models respecting dependency graph (DAG mode)
+   608→   608→   */
+   609→   609→  private async executeDAG(
+   610→   610→    input: unknown,
+   611→   611→    config: PipelineConfig,
+   612→   612→    executionId: string
+   613→   613→  ): Promise<Map<string, BasePredictionResult>> {
+   614→   614→    const results = new Map<string, BasePredictionResult>();
+   615→   615→    const executed = new Set<string>();
+   616→   616→    const executing = new Set<string>();
+   617→   617→
+   618→   618→    const executeWithDependencies = async (
+   619→   619→      modelId: string
+   620→   620→    ): Promise<void> => {
+   621→   621→      if (executed.has(modelId)) return;
+   622→   622→      if (executing.has(modelId)) return; // Prevent cycles
+   623→   623→
+   624→   624→      const modelConfig = config.models.find((m) => m.modelId === modelId);
+   625→   625→      if (!modelConfig || !modelConfig.enabled) {
+   626→   626→        executed.add(modelId);
+   627→   627→        return;
+   628→   628→      }
+   629→   629→
+   630→   630→      executing.add(modelId);
+   631→   631→
+   632→   632→      // Execute dependencies first
+   633→   633→      if (modelConfig.dependencies) {
+   634→   634→        for (const dep of modelConfig.dependencies) {
+   635→   635→          await executeWithDependencies(dep);
+   636→   636→        }
+   637→   637→      }
+   638→   638→
+   639→   639→      // Execute this model
+   640→   640→      const result = await this.executeModelWithRetry(
+   641→   641→        modelId,
+   642→   642→        input,
+   643→   643→        config,
+   644→   644→        executionId
+   645→   645→      );
+   646→   646→
+   647→   647→      results.set(modelId, result);
+   648→   648→      executed.add(modelId);
+   649→   649→      executing.delete(modelId);
+   650→   650→    };
+   651→   651→
+   652→   652→    // Execute all enabled models (dependencies will be resolved automatically)
+   653→   653→    for (const modelConfig of config.models) {
+   654→   654→      if (modelConfig.enabled) {
+   655→   655→        await executeWithDependencies(modelConfig.modelId);
+   656→   656→      }
+   657→   657→    }
+   658→   658→
+   659→   659→    return results;
+   660→   660→  }
+   661→   661→
+   662→   662→  /**
+   663→   663→   * Execute models in fallback chain (try each until one succeeds)
+   664→   664→   */
+   665→   665→  private async executeFallbackChain(
+   666→   666→    input: unknown,
+   667→   667→    config: PipelineConfig,
+   668→   668→    executionId: string
+   669→   669→  ): Promise<Map<string, BasePredictionResult>> {
+   670→   670→    const results = new Map<string, BasePredictionResult>();
+   671→   671→    const sortedModels = this.getSortedModels(config);
+   672→   672→
+   673→   673→    for (const modelConfig of sortedModels) {
+   674→   674→      if (!modelConfig.enabled) continue;
+   675→   675→
+   676→   676→      try {
+   677→   677→        const result = await this.executeModelWithRetry(
+   678→   678→          modelConfig.modelId,
+   679→   679→          input,
+   680→   680→          config,
+   681→   681→          executionId
+   682→   682→        );
+   683→   683→
+   684→   684→        results.set(modelConfig.modelId, result);
+   685→   685→
+   686→   686→        // If successful, stop the chain
+   687→   687→        if (result.success && result.confidence >= 0.5) {
+   688→   688→          logger.debug(
+   689→   689→            `Fallback chain stopped at ${modelConfig.modelId} (successful prediction)`
+   690→   690→          );
+   691→   691→          break;
+   692→   692→        }
+   693→   693→      } catch (error) {
+   694→   694→        logger.warn(
+   695→   695→          `Model ${modelConfig.modelId} failed in fallback chain, trying next...`,
+   696→   696→          error
+   697→   697→        );
+   698→   698→
+   699→   699→        // Try fallback model if specified
+   700→   700→        if (modelConfig.fallbackModelId) {
+   701→   701→          const fallbackConfig = config.models.find(
+   702→   702→            (m) => m.modelId === modelConfig.fallbackModelId
+   703→   703→          );
+   704→   704→          
+   705→   705→          if (fallbackConfig && fallbackConfig.enabled) {
+   706→   706→            const fallbackResult = await this.executeModelWithRetry(
+   707→   707→              fallbackConfig.modelId,
+   708→   708→              input,
+   709→   709→              config,
+   710→   710→              executionId
+   711→   711→            );
+   712→   712→            
+   713→   713→            results.set(fallbackConfig.modelId, fallbackResult);
+   714→   714→            
+   715→   715→            if (fallbackResult.success) {
+   716→   716→              break;
+   717→   717→            }
+   718→   718→          }
+   719→   719→        }
+   720→   720→      }
+   721→   721→    }
+   722→   722→
+   723→   723→    return results;
+   724→   724→  }
+   725→   725→
+   726→   726→  // ============== Model Execution with Retry ==============
+   727→   727→
+   728→   728→  /**
+   729→   729→   * Execute a single model with retry logic
+   730→   730→   */
+   731→   731→  private async executeModelWithRetry(
+   732→   732→    modelId: string,
+   733→   733→    input: unknown,
+   734→   734→    config: PipelineConfig,
+   735→   735→    executionId: string
+   736→   736→  ): Promise<BasePredictionResult> {
+   737→   737→    const model = this.models.get(modelId);
+   738→   738→    
+   739→   739→    if (!model) {
+   740→   740→      return this.createModelError(
+   741→   741→        modelId,
+   742→   742→        `Model '${modelId}' is not registered`,
+   743→   743→        'MODEL_NOT_FOUND'
+   744→   744→      );
+   745→   745→    }
+   746→   746→
+   747→   747→    if (!model.isAvailable()) {
+   748→   748→      return this.createModelError(
+   749→   749→        modelId,
+   750→   750→        `Model '${modelId}' is not available`,
+   751→   751→        'MODEL_UNAVAILABLE'
+   752→   752→      );
+   753→   753→    }
+   754→   754→
+   755→   755→    this.emit(PipelineEventType.MODEL_STARTED, { modelId }, executionId);
+   756→   756→
+   757→   757→    const retryConfig = config.retry;
+   758→   758→    let lastError: Error | null = null;
+   759→   759→    let attempt = 0;
+   760→   760→
+   761→   761→    while (attempt <= (retryConfig.enabled ? retryConfig.maxAttempts : 0)) {
+   762→   762→      try {
+   763→   763→        // Apply timeout
+   764→   764→        const result = await Promise.race([
+   765→   765→          model.predict(input),
+   766→   766→          new Promise<BasePredictionResult>((_, reject) =>
+   767→   767→            setTimeout(
+   768→   768→              () => reject(new Error('Model prediction timeout')),
+   769→   769→              config.timeout.perModelMs
+   770→   770→            )
+   771→   771→          ),
+   772→   772→        ]);
+   773→   773→
+   774→   774→        this.emit(PipelineEventType.MODEL_COMPLETED, { modelId, result }, executionId);
+   775→   775→        this.metrics.recordModelExecution(modelId, Date.now(), true);
+   776→   776→
+   777→   777→        return result;
+   778→   778→      } catch (error) {
+   779→   779→        lastError = error as Error;
+   780→   780→        attempt++;
+   781→   781→
+   782→   782→        if (attempt <= retryConfig.maxAttempts && retryConfig.enabled) {
+   783→   783→          const delay = Math.min(
+   784→   784→            retryConfig.initialDelayMs *
+   785→   785→              Math.pow(retryConfig.backoffMultiplier, attempt - 1),
+   786→   786→            retryConfig.maxDelayMs
+   787→   787→          );
+   788→   788→
+   789→   789→          this.emit(
+   790→   790→            PipelineEventType.MODEL_RETRY,
+   791→   791→            { modelId, attempt, delay, error: lastError.message },
+   792→   792→            executionId
+   793→   793→          );
+   794→   794→
+   795→   795→          logger.warn(
+   796→   796→            `Model ${modelId} attempt ${attempt} failed, retrying in ${delay}ms...`
+   797→   797→          );
+   798→   798→
+   799→   799→          await this.sleep(delay);
+   800→   800→        }
+   801→   801→      }
+   802→   802→    }
+   803→   803→
+   804→   804→    // All retries exhausted
+   805→   805→    this.emit(
+   806→   806→      PipelineEventType.MODEL_FAILED,
+   807→   807→      { modelId, error: lastError?.message, attempts: attempt },
+   808→   808→      executionId
+   809→   809→    );
+   810→   810→
+   811→   811→    this.metrics.recordModelExecution(modelId, Date.now(), false);
+   812→   812→
+   813→   813→    return this.createModelError(
+   814→   814→      modelId,
+   815→   815→      lastError?.message || 'Unknown error',
+   816→   816→      'MAX_RETRIES_EXCEEDED'
+   817→   817→    );
+   818→   818→  }
+   819→   819→
+   820→   820→  // ============== Result Aggregation ==============
+   821→   821→
+   822→   822→  /**
+   823→   823→   * Aggregate results from multiple models into a single prediction
+   824→   824→   */
+   825→   825→  aggregateResults(
+   826→   826→    modelResults: Map<string, BasePredictionResult>,
+   827→   827→    aggregationConfig: AggregationConfig
+   828→   828→  ): AggregatedResult {
+   829→   829→    const resultsArray = Array.from(modelResults.values());
+   830→   830→    const successfulResults = resultsArray.filter((r) => r.success);
+   831→   831→
+   832→   832→    if (successfulResults.length === 0) {
+   833→   833→      return {
+   834→   834→        finalPrediction: null,
+   835→   835→        confidence: 0,
+   836→   836→        agreement: 0,
+   837→   837→        agreeingModels: 0,
+   838→   838→        totalModels: resultsArray.length,
+   839→   839→        disagreements: [],
+   840→   840→        method: aggregationConfig.method,
+   841→   841→      };
+   842→   842→    }
+   843→   843→
+   844→   844→    switch (aggregationConfig.method) {
+   845→   845→      case AggregationMethod.MAJORITY_VOTE:
+   846→   846→        return this.majorityVoteAggregation(successfulResults, modelResults);
+   847→   847→      case AggregationMethod.WEIGHTED_VOTE:
+   848→   848→        return this.weightedVoteAggregation(successfulResults, modelResults, aggregationConfig);
+   849→   849→      case AggregationMethod.AVERAGE:
+   850→   850→        return this.averageAggregation(successfulResults);
+   851→   851→      case AggregationMethod.WEIGHTED_AVERAGE:
+   852→   852→        return this.weightedAverageAggregation(successfulResults, aggregationConfig);
+   853→   853→      case AggregationMethod.MAX:
+   854→   854→        return this.maxAggregation(successfulResults);
+   855→   855→      case AggregationMethod.MIN:
+   856→   856→        return this.minAggregation(successfulResults);
+   857→   857→      default:
+   858→   858→        return this.averageAggregation(successfulResults);
+   859→   859→    }
+   860→   860→  }
+   861→   861→
+   862→   862→  /**
+   863→   863→   * Majority vote aggregation for classification tasks
+   864→   864→   */
+   865→   865→  private majorityVoteAggregation(
+   866→   866→    results: BasePredictionResult[],
+   867→   867→    allResults: Map<string, BasePredictionResult>
+   868→   868→  ): AggregatedResult {
+   869→   869→    // Extract predictions (assuming they have predictedClass or value)
+   870→   870→    const votes = new Map<string, number>();
+   871→   871→    
+   872→   872→    for (const result of results) {
+   873→   873→      const prediction = this.extractPredictionValue(result);
+   874→   874→      const key = String(prediction);
+   875→   875→      votes.set(key, (votes.get(key) || 0) + 1);
+   876→   876→    }
+   877→   877→
+   878→   878→    // Find majority
+   879→   879→    let maxVotes = 0;
+   880→   880→    let majorityPrediction: string = '';
+   881→   881→    
+   882→   882→    for (const [prediction, count] of votes.entries()) {
+   883→   883→      if (count > maxVotes) {
+   884→   884→        maxVotes = count;
+   885→   885→        majorityPrediction = prediction;
+   886→   886→      }
+   887→   887→    }
+   888→   888→
+   889→   889→    const confidence = maxVotes / results.length;
+   890→   890→    const disagreements = this.findDisagreements(results, majorityPrediction);
+   891→   891→
+   892→   892→    return {
+   893→   893→      finalPrediction: majorityPrediction,
+   894→   894→      confidence,
+   895→   895→      agreement: confidence,
+   896→   896→      agreeingModels: maxVotes,
+   897→   897→      totalModels: results.length,
+   898→   898→      disagreements: disagreements.length > 0 ? disagreements : undefined,
+   899→   899→      method: AggregationMethod.MAJORITY_VOTE,
+   900→   900→    };
+   901→   901→  }
+   902→   902→
+   903→   903→  /**
+   904→   904→   * Weighted vote aggregation
+   905→   905→   */
+   906→   906→  private weightedVoteAggregation(
+   907→   907→    results: BasePredictionResult[],
+   908→   908→    allResults: Map<string, BasePredictionResult>,
+   909→   909→    config: AggregationConfig
+   910→   910→  ): AggregatedResult {
+   911→   911→    const votes = new Map<string, number>();
+   912→   912→    const weights = this.getModelWeights();
+   913→   913→
+   914→   914→    for (const result of results) {
+   915→   915→      const weight = weights.get(result.modelId) || 1 / results.length;
+   916→   916→      const prediction = String(this.extractPredictionValue(result));
+   917→   917→      votes.set(prediction, (votes.get(prediction) || 0) + weight);
+   918→   918→    }
+   919→   919→
+   920→   920→    let maxScore = 0;
+   921→   921→    let winningPrediction = '';
+   922→   922→
+   923→   923→    for (const [prediction, score] of votes.entries()) {
+   924→   924→      if (score > maxScore) {
+   925→   925→        maxScore = score;
+   926→   926→        winningPrediction = prediction;
+   927→   927→      }
+   928→   928→    }
+   929→   929→
+   930→   930→    const disagreements = this.findDisagreements(results, winningPrediction);
+   931→   931→
+   932→   932→    return {
+   933→   933→      finalPrediction: winningPrediction,
+   934→   934→      confidence: Math.min(maxScore, 1),
+   935→   935→      agreement: this.calculateAgreement(results),
+   936→   936→      agreeingModels: this.countAgreeingModels(results, winningPrediction),
+   937→   937→      totalModels: results.length,
+   938→   938→      disagreements: disagreements.length > 0 ? disagreements : undefined,
+   939→   939→      method: AggregationMethod.WEIGHTED_VOTE,
+   940→   940→    };
+   941→   941→  }
+   942→   942→
+   943→   943→  /**
+   944→   944→   * Simple average aggregation for numeric outputs
+   945→   945→   */
+   946→   946→  private averageAggregation(results: BasePredictionResult[]): AggregatedResult {
+   947→   947→    const values = results.map((r) => this.extractNumericValue(r));
+   948→   948→    const avg = values.reduce((a, b) => a + b, 0) / values.length;
+   949→   949→    const std = Math.sqrt(
+   950→   950→      values.reduce((sum, v) => sum + (v - avg) ** 2, 0) / values.length
+   951→   951→    );
+   952→   952→
+   953→   953→    return {
+   954→   954→      finalPrediction: avg,
+   955→   955→      confidence: 1 / (1 + std), // Higher confidence when std is lower
+   956→   956→      agreement: this.calculateAgreement(results),
+   957→   957→      agreeingModels: results.length,
+   958→   958→      totalModels: results.length,
+   959→   959→      method: AggregationMethod.AVERAGE,
+   960→   960→    };
+   961→   961→  }
+   962→   962→
+   963→   963→  /**
+   964→   964→   * Weighted average aggregation
+   965→   965→   */
+   966→   966→  private weightedAverageAggregation(
+   967→   967→    results: BasePredictionResult[],
+   968→   968→    config: AggregationConfig
+   969→   969→  ): AggregatedResult {
+   970→   970→    const weights = this.getModelWeights();
+   971→   971→    let weightedSum = 0;
+   972→   972→    let totalWeight = 0;
+   973→   973→
+   974→   974→    for (const result of results) {
+   975→   975→      const weight = weights.get(result.modelId) || 1 / results.length;
+   976→   976→      const value = this.extractNumericValue(result);
+   977→   977→      weightedSum += value * weight;
+   978→   978→      totalWeight += weight;
+   979→   979→    }
+   980→   980→
+   981→   981→    const avg = totalWeight > 0 ? weightedSum / totalWeight : 0;
+   982→   982→
+   983→   983→    return {
+   984→   984→      finalPrediction: avg,
+   985→   985→      confidence: this.averageConfidence(results),
+   986→   986→      agreement: this.calculateAgreement(results),
+   987→   987→      agreeingModels: results.length,
+   988→   988→      totalModels: results.length,
+   989→   989→      method: AggregationMethod.WEIGHTED_AVERAGE,
+   990→   990→    };
+   991→   991→  }
+   992→   992→
+   993→   993→  /**
+   994→   994→   * Max aggregation (take highest score/value)
+   995→   995→   */
+   996→   996→  private maxAggregation(results: BasePredictionResult[]): AggregatedResult {
+   997→   997→    let maxValue = -Infinity;
+   998→   998→    let maxResult: BasePredictionResult | null = null;
+   999→   999→
+  1000→  1000→    for (const result of results) {
+  1001→  1001→      const value = this.extractNumericValue(result);
+  1002→  1002→      if (value > maxValue) {
+  1003→  1003→        maxValue = value;
+  1004→  1004→        maxResult = result;
+  1005→  1005→      }
+  1006→  1006→    }
+  1007→  1007→
+  1008→  1008→    return {
+  1009→  1009→      finalPrediction: maxValue,
+  1010→  1010→      confidence: maxResult?.confidence ?? 0,
+  1011→  1011→      agreement: this.calculateAgreement(results),
+  1012→  1012→      agreeingModels: this.countAgreeingModels(results, maxValue),
+  1013→  1013→      totalModels: results.length,
+  1014→  1014→      method: AggregationMethod.MAX,
+  1015→  1015→    };
+  1016→  1016→  }
+  1017→  1017→
+  1018→  1018→  /**
+  1019→  1019→   * Min aggregation (take lowest score/value)
+  1020→  1020→   */
+  1021→  1021→  private minAggregation(results: BasePredictionResult[]): AggregatedResult {
+  1022→  1022→    let minValue = Infinity;
+  1023→  1023→    let minResult: BasePredictionResult | null = null;
+  1024→  1024→
+  1025→  1025→    for (const result of results) {
+  1026→  1026→      const value = this.extractNumericValue(result);
+  1027→  1027→      if (value < minValue) {
+  1028→  1028→        minValue = value;
+  1029→  1029→        minResult = result;
+  1030→  1030→      }
+  1031→  1031→    }
+  1032→  1032→
+  1033→  1033→    return {
+  1034→  1034→      finalPrediction: minValue,
+  1035→  1035→      confidence: minResult?.confidence ?? 0,
+  1036→  1036→      agreement: this.calculateAgreement(results),
+  1037→  1037→      agreeingModels: this.countAgreeingModels(results, minValue),
+  1038→  1038→      totalModels: results.length,
+  1039→  1039→      method: AggregationMethod.MIN,
+  1040→  1040→    };
+  1041→  1041→  }
+  1042→  1042→
+  1043→  1043→  // ============== A/B Testing ==============
+  1044→  1044→
+  1045→  1045→  /**
+  1046→  1046→   * Initialize A/B testing state
+  1047→  1047→   */
+  1048→  1048→  private initializeABTest(config: ABTestingConfig): void {
+  1049→  1049→    this.abTestState = {
+  1050→  1050→      config,
+  1051→  1051→      controlCount: 0,
+  1052→  1052→      treatmentCount: 0,
+  1053→  1053→      controlMetrics: {},
+  1054→  1054→      treatmentMetrics: {},
+  1055→  1055→      startedAt: new Date(),
+  1056→  1056→    };
+  1057→  1057→
+  1058→  1058→    logger.info(`A/B test initialized: ${config.testId}`);
+  1059→  1059→  }
+  1060→  1060→
+  1061→  1061→  /**
+  1062→  1062→   * Execute pipeline with A/B testing
+  1063→  1063→   */
+  1064→  1064→  private async executeWithABTesting(
+  1065→  1065→    input: unknown,
+  1066→  1066→    config: PipelineConfig,
+  1067→  1067→    executionId: string,
+  1068→  1068→    startTime: number
+  1069→  1069→  ): Promise<PipelineResult> {
+  1070→  1070→    if (!this.abTestState) {
+  1071→  1071→      throw new Error('A/B testing state not initialized');
+  1072→  1072→    }
+  1073→  1073→
+  1074→  1074→    // Determine which group this request belongs to
+  1075→  1075→    const isTreatment = this.assignABGroup(config.abTesting!);
+  1076→  1076→    const variant = isTreatment ? config.abTesting!.treatment : config.abTesting!.control;
+  1077→  1077→
+  1078→  1078→    this.emit(
+  1079→  1079→      PipelineEventType.AB_GROUP_ASSIGNED,
+  1080→  1080→      { group: isTreatment ? 'treatment' : 'control', variant: variant.name },
+  1081→  1081→      executionId
+  1082→  1082→    );
+  1083→  1083→
+  1084→  1084→    // Create modified config for this variant
+  1085→  1085→    const variantConfig: PipelineConfig = {
+  1086→  1086→      ...config,
+  1087→  1087→      models: config.models.map((m) => ({
+  1088→  1088→        ...m,
+  1089→  1089→        enabled: variant.modelIds.includes(m.modelId),
+  1090→  1090→      })),
+  1091→  1091→      abTesting: undefined, // Prevent recursive A/B testing
+  1092→  1092→    };
+  1093→  1093→
+  1094→  1094→    // Execute with variant config
+  1095→  1095→    const modelResults = await this.executeParallel(input, variantConfig, executionId);
+  1096→  1096→    const aggregatedResult = this.aggregateResults(modelResults, variantConfig.aggregation);
+  1097→  1097→
+  1098→  1098→    // Record metrics for A/B test
+  1099→  1099→    this.recordABMetrics(isTreatment, aggregatedResult);
+  1100→  1100→
+  1101→  1101→    // Calculate A/B test results
+  1102→  1102→    const abTestResults = this.calculateABTestResults();
+  1103→  1103→
+  1104→  1104→    return {
+  1105→  1105→      executionId,
+  1106→  1106→      pipelineId: config.id,
+  1107→  1107→      startedAt: new Date(startTime),
+  1108→  1108→      completedAt: new Date(),
+  1109→  1109→      totalDurationMs: Date.now() - startTime,
+  1110→  1110→      success: true,
+  1111→  1111→      modelResults,
+  1112→  1112→      aggregatedResult,
+  1113→  1113→      abTestResults,
+  1114→  1114→      metadata: this.buildMetadata(executionId, modelResults, false, config.mode),
+  1115→  1115→    };
+  1116→  1116→  }
+  1117→  1117→
+  1118→  1118→  /**
+  1119→  1119→   * Assign request to control or treatment group
+  1120→  1120→   */
+  1121→  1121→  private assignABGroup(config: ABTestingConfig): boolean {
+  1122→  1122→    if (!this.abTestState) return false;
+  1123→  1123→
+  1124→  1124→    const random = Math.random() * 100;
+  1125→  1125→    const isTreatment = random < config.trafficSplit;
+  1126→  1126→
+  1127→  1127→    if (isTreatment) {
+  1128→  1128→      this.abTestState.treatmentCount++;
+  1129→  1129→    } else {
+  1130→  1130→      this.abTestState.controlCount++;
+  1131→  1131→    }
+  1132→  1132→
+  1133→  1133→    return isTreatment;
+  1134→  1134→  }
+  1135→  1135→
+  1136→  1136→  /**
+  1137→  1137→   * Record metrics for A/B test analysis
+  1138→  1138→   */
+  1139→  1139→  private recordABMetrics(isTreatment: boolean, result: AggregatedResult): void {
+  1140→  1140→    if (!this.abTestState) return;
+  1141→  1141→
+  1142→  1142→    const metrics = isTreatment
+  1143→  1143→      ? this.abTestState.treatmentMetrics
+  1144→  1144→      : this.abTestState.controlMetrics;
+  1145→  1145→
+  1146→  1146→    // Record basic metrics
+  1147→  1147→    metrics['total_requests'] = (metrics['total_requests'] || 0) + 1;
+  1148→  1148→    metrics['avg_confidence'] =
+  1149→  1149→      ((metrics['avg_confidence'] || 0) * (metrics['total_requests'] - 1) +
+  1150→  1150→        result.confidence) /
+  1151→  1151→      metrics['total_requests'];
+  1152→  1152→    metrics['avg_agreement'] =
+  1153→  1153→      ((metrics['avg_agreement'] || 0) * (metrics['total_requests'] - 1) +
+  1154→  1154→        result.agreement) /
+  1155→  1155→      metrics['total_requests'];
+  1156→  1156→  }
+  1157→  1157→
+  1158→  1158→  /**
+  1159→  1159→   * Calculate current A/B test statistical results
+  1160→  1160→   */
+  1161→  1161→  private calculateABTestResults(): ABTestResults | undefined {
+  1162→  1162→    if (!this.abTestState) return undefined;
+  1163→  1163→
+  1164→  1164→    const { config, controlCount, treatmentCount, controlMetrics, treatmentMetrics } =
+  1165→  1165→      this.abTestState;
+  1166→  1166→
+  1167→  1167→    // Basic significance check (simplified - use proper stats library for production)
+  1168→  1168→    const minSampleSize = config.minSampleSize;
+  1169→  1169→    const hasEnoughSamples =
+  1170→  1170→      controlCount >= minSampleSize && treatmentCount >= minSampleSize;
+  1171→  1171→
+  1172→  1172→    // Simplified p-value calculation (use t-test in production)
+  1173→  1173→    const pValue = hasEnoughSamples ? this.simplifiedPValue(controlMetrics, treatmentMetrics) : 1;
+  1174→  1174→    const isSignificant = pValue < config.significanceLevel;
+  1175→  1175→
+  1176→  1176→    // Determine winner based on primary metric
+  1177→  1177→    let winningVariant: 'control' | 'treatment' | undefined;
+  1178→  1178→    if (isSignificant) {
+  1179→  1179→      const controlPrimary = controlMetrics[config.metrics[0]] ?? 0;
+  1180→  1180→      const treatmentPrimary = treatmentMetrics[config.metrics[0]] ?? 0;
+  1181→  1181→      
+  1182→  1182→      // Assuming higher is better for now
+  1183→  1183→      winningVariant = treatmentPrimary > controlPrimary ? 'treatment' : 'control';
+  1184→  1184→    }
+  1185→  1185→
+  1186→  1186→    return {
+  1187→  1187→      testId: config.testId,
+  1188→  1188→      control: {
+  1189→  1189→        variantName: config.control.name,
+  1190→  1190→        sampleSize: controlCount,
+  1191→  1191→        metrics: controlMetrics,
+  1192→  1192→      },
+  1193→  1193→      treatment: {
+  1194→  1194→        variantName: config.treatment.name,
+  1195→  1195→        sampleSize: treatmentCount,
+  1196→  1196→        metrics: treatmentMetrics,
+  1197→  1197→      },
+  1198→  1198→      isSignificant,
+  1199→  1199→      pValue,
+  1200→  1200→      winningVariant,
+  1201→  1201→      recommendation: isSignificant
+  1202→  1202→        ? `Consider switching to ${winningVariant} variant`
+  1203→  1203→        : 'Continue collecting data',
+  1204→  1204→    };
+  1205→  1205→  }
+  1206→  1206→
+  1207→  1207→  /**
+  1208→  1208→   * Very simplified p-value approximation
+  1209→  1209→   * NOTE: Use proper statistical library for production!
+  1210→  1210→   */
+  1211→  1211→  private simplifiedPValue(
+  1212→  1212→    controlMetrics: Record<string, number>,
+  1213→  1213→    treatmentMetrics: Record<string, number>
+  1214→  1214→  ): number {
+  1215→  1215→    // This is a placeholder - implement proper statistical test
+  1216→  1216→    const diff = Math.abs(
+  1217→  1217→      (treatmentMetrics['avg_confidence'] ?? 0) -
+  1218→  1218→        (controlMetrics['avg_confidence'] ?? 0)
+  1219→  1219→    );
+  1220→  1220→    
+  1221→  1221→    // Rough approximation - smaller difference = higher p-value
+  1222→  1222→    return Math.max(0.01, 1 - diff * 10);
+  1223→  1223→  }
+  1224→  1224→
+  1225→  1225→  // ============== Helper Methods ==============
+  1226→  1226→
+  1227→  1227→  /**
+  1228→  1228→   * Get models sorted by priority
+  1229→  1229→   */
+  1230→  1230→  private getSortedModels(config: PipelineConfig): PipelineModelConfig[] {
+  1231→  1231→    return [...config.models].sort((a, b) => a.priority - b.priority);
+  1232→  1232→  }
+  1233→  1233→
+  1234→  1234→  /**
+  1235→  1235→   * Get model weights from configuration
+  1236→  1236→   */
+  1237→  1237→  private getModelWeights(): Map<string, number> {
+  1238→  1238→    const weights = new Map<string, number>();
+  1239→  1239→    const enabledModels = this.config.models.filter((m) => m.enabled);
+  1240→  1240→    const totalWeight = enabledModels.reduce((sum, m) => sum + m.weight, 0);
+  1241→  1241→
+  1242→  1242→    for (const model of enabledModels) {
+  1243→  1243→      weights.set(model.modelId, model.weight / totalWeight);
+  1244→  1244→    }
+  1245→  1245→
+  1246→  1246→    return weights;
+  1247→  1247→  }
+  1248→  1248→
+  1249→  1249→  /**
+  1250→  1250→   * Extract prediction value from result
+  1251→  1251→   */
+  1252→  1252→  private extractPredictionValue(result: BasePredictionResult): unknown {
+  1253→  1253→    const resultAny = result as Record<string, unknown>;
+  1254→  1254→    return (
+  1255→  1255→      resultAny.predictedClass ??
+  1256→  1256→      resultAny.value ??
+  1257→  1257→      resultAny.isAnomalous ??
+  1258→  1258→      resultAny.riskScore ??
+  1259→  1259→      null
+  1260→  1260→    );
+  1261→  1261→  }
+  1262→  1262→
+  1263→  1263→  /**
+  1264→  1264→   * Extract numeric value from result
+  1265→  1265→   */
+  1266→  1266→  private extractNumericValue(result: BasePredictionResult): number {
+  1267→  1267→    const value = this.extractPredictionValue(result);
+  1268→  1268→    return typeof value === 'number' ? value : result.confidence;
+  1269→  1269→  }
+  1270→  1270→
+  1271→  1271→  /**
+  1272→  1272→   * Find disagreements among model predictions
+  1273→  1273→   */
+  1274→  1274→  private findDisagreements(
+  1275→  1275→    results: BasePredictionResult[],
+  1276→  1276→    majorityPrediction: string
+  1277→  1277→  ): DisagreementDetail[] {
+  1278→  1278→    const disagreements: DisagreementDetail[] = [];
+  1279→  1279→
+  1280→  1280→    for (const result of results) {
+  1281→  1281→      const prediction = String(this.extractPredictionValue(result));
+  1282→  1282→      if (prediction !== majorityPrediction) {
+  1283→  1283→        disagreements.push({
+  1284→  1284→          modelId: result.modelId,
+  1285→  1285→          prediction,
+  1286→  1286→          majorityPrediction,
+  1287→  1287→          deviationScore: Math.abs(result.confidence - 0.5) * 2,
+  1288→  1288→        });
+  1289→  1289→      }
+  1290→  1290→    }
+  1291→  1291→
+  1292→  1292→    return disagreements;
+  1293→  1293→  }
+  1294→  1294→
+  1295→  1295→  /**
+  1296→  1296→   * Calculate agreement level among models (0-1)
+  1297→  1297→   */
+  1298→  1298→  private calculateAgreement(results: BasePredictionResult[]): number {
+  1299→  1299→    if (results.length <= 1) return 1;
+  1300→  1300→
+  1301→  1301→    const predictions = results.map((r) => String(this.extractPredictionValue(r)));
+  1302→  1302→    const uniquePredictions = new Set(predictions);
+  1303→  1303→
+  1304→  1304→    // Perfect agreement if all same
+  1305→  1305→    if (uniquePredictions.size === 1) return 1;
+  1306→  1306→
+  1307→  1307→    // No agreement if all different
+  1308→  1308→    if (uniquePredictions.size === results.length) return 0;
+  1309→  1309→
+  1310→  1310→    // Partial agreement based on majority proportion
+  1311→  1311→    const counts = new Map<string, number>();
+  1312→  1312→    for (const pred of predictions) {
+  1313→  1313→      counts.set(pred, (counts.get(pred) || 0) + 1);
+  1314→  1314→    }
+  1315→  1315→
+  1316→  1316→    const maxCount = Math.max(...counts.values());
+  1317→  1317→    return maxCount / results.length;
+  1318→  1318→  }
+  1319→  1319→
+  1320→  1320→  /**
+  1321→  1321→   * Count models that agree with given prediction
+  1322→  1322→   */
+  1323→  1323→  private countAgreeingModels(
+  1324→  1324→    results: BasePredictionResult[],
+  1325→  1325→    targetPrediction: unknown
+  1326→  1326→  ): number {
+  1327→  1327→    return results.filter(
+  1328→  1328→      (r) => String(this.extractPredictionValue(r)) === String(targetPrediction)
+  1329→  1329→    ).length;
+  1330→  1330→  }
+  1331→  1331→
+  1332→  1332→  /**
+  1333→  1333→   * Average confidence across results
+  1334→  1334→   */
+  1335→  1335→  private averageConfidence(results: BasePredictionResult[]): number {
+  1336→  1336→    if (results.length === 0) return 0;
+  1337→  1337→    return results.reduce((sum, r) => sum + r.confidence, 0) / results.length;
+  1338→  1338→  }
+  1339→  1339→
+  1340→  1340→  /**
+  1341→  1341→   * Check if we should stop early in sequential mode
+  1342→  1342→   */
+  1343→  1343→  private shouldStopEarly(
+  1344→  1344→    result: BasePredictionResult,
+  1345→  1345→    config: PipelineConfig
+  1346→  1346→  ): boolean {
+  1347→  1347→    // Stop if high confidence detection (e.g., clear fraud)
+  1348→  1348→    const resultAny = result as Record<string, unknown>;
+  1349→  1349→    
+  1350→  1350→    if (resultAny.isAnomalous === true && result.confidence > 0.95) {
+  1351→  1351→      return true;
+  1352→  1352→    }
+  1353→  1353→
+  1354→  1354→    if (
+  1355→  1355→      typeof resultAny.riskScore === 'number' &&
+  1356→  1356→      (resultAny.riskScore as number) > 90
+  1357→  1357→    ) {
+  1358→  1358→      return true;
+  1359→  1359→    }
+  1360→  1360→
+  1361→  1361→    return false;
+  1362→  1362→  }
+  1363→  1363→
+  1364→  1364→  /**
+  1365→  1365→   * Generate unique execution ID
+  1366→  1366→   */
+  1367→  1367→  private generateExecutionId(): string {
+  1368→  1368→    return `exec_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  1369→  1369→  }
+  1370→  1370→
+  1371→  1371→  /**
+  1372→  1372→   * Generate cache key from input data
+  1373→  1373→   */
+  1374→  1374→  private generateCacheKey(input: unknown): string {
+  1375→  1375→    const prefix = this.config.id;
+  1376→  1376→    const hash = generateHash(input);
+  1377→  1377→    return `${prefix}:${hash}`;
+  1378→  1378→  }
+  1379→  1379→
+  1380→  1380→  /**
+  1381→  1381→   * Create error result for a model
+  1382→  1382→   */
+  1383→  1383→  private createModelError(
+  1384→  1384→    modelId: string,
+  1385→  1385→    message: string,
+  1386→  1386→    code: string
+  1387→  1387→  ): BasePredictionResult {
+  1388→  1388→    const error: PredictionError = {
+  1389→  1389→      code,
+  1390→  1390→      message,
+  1391→  1391→    };
+  1392→  1392→
+  1393→  1393→    return {
+  1394→  1394→      predictionId: this.generateExecutionId(),
+  1395→  1395→      modelId,
+  1396→  1396→      timestamp: new Date(),
+  1397→  1397→      processingTimeMs: 0,
+  1398→  1398→      success: false,
+  1399→  1399→      confidence: 0,
+  1400→  1400→      error,
+  1401→  1401→    };
+  1402→  1402→  }
+  1403→  1403→
+  1404→  1404→  /**
+  1405→  1405→   * Create aggregated result for error case
+  1406→  1406→   */
+  1407→  1407→  private createErrorAggregatedResult(error: unknown): AggregatedResult {
+  1408→  1408→    return {
+  1409→  1409→      finalPrediction: null,
+  1410→  1410→      confidence: 0,
+  1411→  1411→      agreement: 0,
+  1412→  1412→      agreeingModels: 0,
+  1413→  1413→      totalModels: 0,
+  1414→  1414→      method: this.config.aggregation.method,
+  1415→  1415→    };
+  1416→  1416→  }
+  1417→  1417→
+  1418→  1418→  /**
+  1419→  1419→   * Create result from cache hit
+  1420→  1420→   */
+  1421→  1421→  private createCachedResult(
+  1422→  1422→    cached: AggregatedResult,
+  1423→  1423→    executionId: string,
+  1424→  1424→    startTime: number,
+  1425→  1425→    cacheKey: string
+  1426→  1426→  ): PipelineResult {
+  1427→  1427→    return {
+  1428→  1428→      executionId,
+  1429→  1429→      pipelineId: this.config.id,
+  1430→  1430→      startedAt: new Date(startTime),
+  1431→  1431→      completedAt: new Date(),
+  1432→  1432→      totalDurationMs: Date.now() - startTime,
+  1433→  1433→      success: true,
+  1434→  1434→      modelResults: new Map(),
+  1435→  1435→      aggregatedResult: cached,
+  1436→  1436→      metadata: this.buildMetadata(executionId, new Map(), false, this.config.mode, true),
+  1437→  1437→    };
+  1438→  1438→  }
+  1439→  1439→
+  1440→  1440→  /**
+  1441→  1441→   * Build execution metadata
+  1442→  1442→   */
+  1443→  1443→  private buildMetadata(
+  1444→  1444→    executionId: string,
+  1445→  1445→    modelResults: Map<string, BasePredictionResult>,
+  1446→  1446→    hadError: boolean,
+  1447→  1447→    mode: PipelineMode,
+  1448→  1448→    cacheHit: boolean = false
+  1449→  1449→  ): PipelineExecutionMetadata {
+  1450→  1450→    const resultsArray = Array.from(modelResults.values());
+  1451→  1451→
+  1452→  1452→    return {
+  1453→  1453→      inputHash: '', // Would need input to compute
+  1454→  1454→      modelsAttempted: this.config.models.map((m) => m.modelId),
+  1455→  1455→      modelsSucceeded: resultsArray
+  1456→  1456→        .filter((r) => r.success)
+  1457→  1457→        .map((r) => r.modelId),
+  1458→  1458→      modelsFailed: resultsArray
+  1459→  1459→        .filter((r) => !r.success)
+  1460→  1460→        .map((r) => r.modelId),
+  1461→  1461→      cacheHit,
+  1462→  1462→      retriesPerformed: this.metrics.getTotalRetries(),
+  1463→  1463→      mode,
+  1464→  1464→      environment: {
+  1465→  1465→        nodeVersion: process.version,
+  1466→  1466→        memoryUsageMb: process.memoryUsage().heapUsed / 1024 / 1024,
+  1467→  1467→        cpuUsage: 0, // Would need additional tracking
+  1468→  1468→      },
+  1469→  1469→    };
+  1470→  1470→  }
+  1471→  1471→
+  1472→  1472→  /**
+  1473→  1473→   * Sleep helper for delays
+  1474→  1474→   */
+  1475→  1475→  private sleep(ms: number): Promise<void> {
+  1476→  1476→    return new Promise((resolve) => setTimeout(resolve, ms));
+  1477→  1477→  }
+  1478→  1478→
+  1479→  1479→  // ============== Metrics & Monitoring ==============
+  1480→  1480→
+  1481→  1481→  /**
+  1482→  1482→   * Get pipeline performance metrics
+  1483→  1483→   */
+  1484→  1484→  getMetrics(): PipelineMetricsSnapshot {
+  1485→  1485→    return this.metrics.getSnapshot();
+  1486→  1486→  }
+  1487→  1487→
+  1488→  1488→  /**
+  1489→  1489→   * Reset all metrics
+  1490→  1490→   */
+  1491→  1491→  resetMetrics(): void {
+  1492→  1492→    this.metrics.reset();
+  1493→  1493→  }
+  1494→  1494→
+  1495→  1495→  /**
+  1496→  1496→   * Clear the result cache
+  1497→  1497→   */
+  1498→  1498→  clearCache(): void {
+  1499→  1499→    this.cache.clear();
+  1500→  1500→    logger.info('Pipeline cache cleared');
+  1501→  1501→  }
+  1502→  1502→
+  1503→  1503→  /**
+  1504→  1504→   * Get cache statistics
+  1505→  1505→   */
+  1506→  1506→  getCacheStats(): { size: number; maxSize: number } {
+  1507→  1507→    return {
+  1508→  1508→      size: this.cache.size,
+  1509→  1509→      maxSize: this.config.caching.maxSize,
+  1510→  1510→    };
+  1511→  1511→  }
+  1512→  1512→
+  1513→  1513→  /**
+  1514→  1514→   * Get current A/B test state (if active)
+  1515→  1515→   */
+  1516→  1516→  getABTestState(): ABTestState | null {
+  1517→  1517→    return this.abTestState;
+  1518→  1518→  }
+  1519→  1519→
+  1520→  1520→  /**
+  1521→  1521→   * End A/B test and get final results
+  1522→  1522→   */
+  1523→  1523→  endABTest(): ABTestResults | null {
+  1524→  1524→    if (!this.abTestState) return null;
+  1525→  1525→
+  1526→  1526→    const results = this.calculateABTestResults();
+  1527→  1527→    this.abTestState = null;
+  1528→  1528→
+  1529→  1529→    logger.info(`A/B test ended: ${results?.testId}`);
+  1530→  1530→
+  1531→  1531→    return results;
+  1532→  1532→  }
+  1533→  1533→
+  1534→  1534→  /**
+  1535→  1535→   * Health check for the entire pipeline
+  1536→  1536→   */
+  1537→  1537→  async healthCheck(): Promise<PipelineHealthStatus> {
+  1538→  1538→    const modelHealths = new Map<string, ModelHealthStatus>();
+  1539→  1539→
+  1540→  1540→    for (const [modelId, model] of this.models) {
+  1541→  1541→      modelHealths.set(modelId, model.getHealth());
+  1542→  1542→    }
+  1543→  1543→
+  1544→  1544→    const healthyModels = Array.from(modelHealths.values()).filter(
+  1545→  1545→      (h) => h.isHealthy
+  1546→  1546→    ).length;
+  1547→  1547→    const totalModels = modelHealths.size;
+  1548→  1548→
+  1549→  1549→    const isHealthy = healthyModels === totalModels && totalModels > 0;
+  1550→  1550→
+  1551→  1551→    return {
+  1552→  1552→      isHealthy,
+  1553→  1553→      pipelineId: this.config.id,
+  1554→  1554→      totalModels,
+  1555→  1555→      healthyModels,
+  1556→  1556→      unhealthyModels: totalModels - healthyModels,
+  1557→  1557→      modelHealths,
+  1558→  1558→      uptime: process.uptime(),
+  1559→  1559→      lastExecutionAt: this.metrics.getLastExecutionTime(),
+  1560→  1560→    };
+  1561→  1561→  }
+  1562→  1562→
+  1563→  1563→  /**
+  1564→  1564→   * Dispose of pipeline resources
+  1565→  1565→   */
+  1566→  1566→  dispose(): void {
+  1567→  1567→    this.clearCache();
+  1568→  1568→    this.listeners.clear();
+  1569→  1569→    this.models.clear();
+  1570→  1570→    logger.info(`Pipeline disposed: ${this.config.id}`);
+  1571→  1571→  }
+  1572→  1572→}
+  1573→  1573→
+  1574→  1574→// ============== Metrics Collector ==============
+  1575→  1575→
+  1576→  1576→/**
+  1577→  1577→ * Internal metrics collector for pipeline monitoring
+  1578→  1578→ */
+  1579→  1579→class PipelineMetrics {
+  1580→  1580→  private totalExecutions = 0;
+  1581→  1581→  private successfulExecutions = 0;
+  1582→  1582→  private failedExecutions = 0;
+  1583→  1583→  private totalExecutionTimeMs = 0;
+  1584→  1584→  private modelExecutions = new Map<string, { count: number; successes: number }>();
+  1585→  1585→  private totalRetries = 0;
+  1586→  1586→  private lastExecutionTime: Date | null = null;
+  1587→  1587→
+  1588→  1588→  recordExecution(durationMs: number, success: boolean): void {
+  1589→  1589→    this.totalExecutions++;
+  1590→  1590→    this.totalExecutionTimeMs += durationMs;
+  1591→  1591→    this.lastExecutionTime = new Date();
+  1592→  1592→
+  1593→  1593→    if (success) {
+  1594→  1594→      this.successfulExecutions++;
+  1595→  1595→    } else {
+  1596→  1596→      this.failedExecutions++;
+  1597→  1597→    }
+  1598→  1598→  }
+  1599→  1599→
+  1600→  1600→  recordModelExecution(modelId: string, _timestamp: number, success: void | boolean): void {
+  1601→  1601→    const current = this.modelExecutions.get(modelId) || { count: 0, successes: 0 };
+  1602→  1602→    current.count++;
+  1603→  1603→    if (success) current.successes++;
+  1604→  1604→    this.modelExecutions.set(modelId, current);
+  1605→  1605→  }
+  1606→  1606→
+  1607→  1607→  recordRetry(): void {
+  1608→  1608→    this.totalRetries++;
+  1609→  1609→  }
+  1610→  1610→
+  1611→  1611→  getTotalRetries(): number {
+  1612→  1612→    return this.totalRetries;
+  1613→  1613→  }
+  1614→  1614→
+  1615→  1615→  getLastExecutionTime(): Date | null {
+  1616→  1616→    return this.lastExecutionTime;
+  1617→  1617→  }
+  1618→  1618→
+  1619→  1619→  getSnapshot(): PipelineMetricsSnapshot {
+  1620→  1620→    return {
+  1621→  1621→      totalExecutions: this.totalExecutions,
+  1622→  1622→      successfulExecutions: this.successfulExecutions,
+  1623→  1623→      failedExecutions: this.failedExecutions,
+  1624→  1624→      successRate:
+  1625→  1625→        this.totalExecutions > 0
+  1626→  1626→          ? this.successfulExecutions / this.totalExecutions
+  1627→  1627→          : 0,
+  1628→  1628→      avgExecutionTimeMs:
+  1629→  1629→        this.totalExecutions > 0
+  1630→  1630→          ? this.totalExecutionTimeMs / this.totalExecutions
+  1631→  1631→          : 0,
+  1632→  1632→      totalRetries: this.totalRetries,
+  1633→  1633→      modelExecutions: Object.fromEntries(this.modelExecutions),
+  1634→  1634→      lastExecutionTime: this.lastExecutionTime,
+  1635→  1635→    };
+  1636→  1636→  }
+  1637→  1637→
+  1638→  1638→  reset(): void {
+  1639→  1639→    this.totalExecutions = 0;
+  1640→  1640→    this.successfulExecutions = 0;
+  1641→  1641→    this.failedExecutions = 0;
+  1642→  1642→    this.totalExecutionTimeMs = 0;
+  1643→  1643→    this.modelExecutions.clear();
+  1644→  1644→    this.totalRetries = 0;
+  1645→  1645→  }
+  1646→  1646→}
+  1647→  1647→
+  1648→  1648→// ============== Exported Types ==============
+  1649→  1649→
+  1650→  1650→/** Snapshot of pipeline metrics */
+  1651→  1651→export interface PipelineMetricsSnapshot {
+  1652→  1652→  totalExecutions: number;
+  1653→  1653→  successfulExecutions: number;
+  1654→  1654→  failedExecutions: number;
+  1655→  1655→  successRate: number;
+  1656→  1656→  avgExecutionTimeMs: number;
+  1657→  1657→  totalRetries: number;
+  1658→  1658→  modelExecutions: Record<string, { count: number; successes: number }>;
+  1659→  1659→  lastExecutionTime: Date | null;
+  1660→  1660→}
+  1661→  1661→
+  1662→  1662→/** Pipeline health status */
+  1663→  1663→export interface PipelineHealthStatus {
+  1664→  1664→  isHealthy: boolean;
+  1665→  1665→  pipelineId: string;
+  1666→  1666→  totalModels: number;
+  1667→  1667→  healthyModels: number;
+  1668→  1668→  unhealthyModels: number;
+  1669→  1669→  modelHealths: Map<string, ModelHealthStatus>;
+  1670→  1670→  uptime: number;
+  1671→  1671→  lastExecutionAt: Date | null;
+  1672→  1672→}
+  1673→  1673→
+  1674→  1674→/** Internal A/B test state */
+  1675→  1675→interface ABTestState {
+  1676→  1676→  config: ABTestingConfig;
+  1677→  1677→  controlCount: number;
+  1678→  1678→  treatmentCount: number;
+  1679→  1679→  controlMetrics: Record<string, number>;
+  1680→  1680→  treatmentMetrics: Record<string, number>;
+  1681→  1681→  startedAt: Date;
+  1682→  1682→}
+  1683→  1683→

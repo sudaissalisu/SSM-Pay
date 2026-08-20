@@ -1,0 +1,1536 @@
+     1→/**
+     2→ * Machine Learning Utility Functions for SSM-Pay
+     3→ * 
+     4→ * @module ml/utils
+     5→ * @description Comprehensive utility functions for data preprocessing, feature engineering,
+     6→ * statistical analysis, matrix operations, and validation used across all ML modules.
+     7→ * 
+     8→ * @version 1.0.0
+     9→ * @since 2.0.0
+    10→ * @author SSM-Pay ML Engineering Team
+    11→ */
+    12→
+    13→import { logger } from '@/lib/logger';
+    14→import {
+    15→  FeatureType,
+    16→  MissingValueStrategy,
+    17→  NormalizationMethod,
+    18→  QualityIssueType,
+    19→  QualityIssue,
+    20→} from './types';
+    21→
+    22→// ============== Data Preprocessing Functions ==============
+    23→
+    24→/**
+    25→ * Options for data preprocessing operations
+    26→ */
+    27→export interface PreprocessingOptions {
+    28→  /** Handle missing values */
+    29→  handleMissing?: boolean;
+    30→  /** Missing value strategy */
+    31→  missingStrategy?: MissingValueStrategy;
+    32→  /** Remove duplicates */
+    33→  removeDuplicates?: boolean;
+    34→  /** Validate data types */
+    35→  validateTypes?: boolean;
+    36→  /** Clip outliers using IQR method */
+    37→  clipOutliers?: boolean;
+    38→  /** IQR multiplier for outlier detection (default: 1.5) */
+    39→  iqrMultiplier?: number;
+    40→  /** Custom value for constant imputation */
+    41→  imputationConstant?: number;
+    42→}
+    43→
+    44→/**
+    45→ * Result of preprocessing operation
+    46→ */
+    47→export interface PreprocessingResult<T> {
+    48→  /** Processed data array */
+    49→  data: T[];
+    50→  /** Original data length */
+    51→  originalLength: number;
+    52→  /** Processed data length */
+    53→  processedLength: number;
+    54→  /** Number of rows removed */
+    55→  rowsRemoved: number;
+    56→  /** Quality issues found and handled */
+    57→  issuesHandled: QualityIssue[];
+    58→  /** Statistics about transformations applied */
+    59→  stats: PreprocessingStats;
+    60→}
+    61→
+    62→/** Statistics collected during preprocessing */
+    63→export interface PreprocessingStats {
+    64→  /** Number of missing values filled */
+    65→  missingValuesFilled: number;
+    66→  /** Number of duplicates removed */
+    67→  duplicatesRemoved: number;
+    68→  /** Number of outliers clipped */
+    69→  outliersClipped: number;
+    70→  /** Number of type conversions performed */
+    71→  typeConversions: number;
+    72→}
+    73→
+    74→/**
+    75→ * Preprocess a numeric dataset with configurable options
+    76→ * 
+    77→ * @param data - Array of numeric values or records
+    78→ * @param options - Preprocessing configuration options
+    79→ * @returns Preprocessing result with processed data and statistics
+    80→ * 
+    81→ * @example
+    82→ * ```typescript
+    83→ * const result = preprocessNumeric([1, 2, null, 1000, 3], {
+    84→ *   handleMissing: true,
+    85→ *   missingStrategy: MissingValueStrategy.MEDIAN_IMPUTATION,
+    86→ *   clipOutliers: true
+    87→ * });
+    88→ * // Returns cleaned data with statistics
+    89→ * ```
+    90→ */
+    91→export function preprocessNumeric(
+    92→  data: (number | null | undefined)[],
+    93→  options: PreprocessingOptions = {}
+    94→): PreprocessingResult<number> {
+    95→  const {
+    96→    handleMissing = true,
+    97→    missingStrategy = MissingValueStrategy.MEDIAN_IMPUTATION,
+    98→    clipOutliers = false,
+    99→    iqrMultiplier = 1.5,
+   100→    imputationConstant = 0,
+   101→  } = options;
+   102→
+   103→  const stats: PreprocessingStats = {
+   104→    missingValuesFilled: 0,
+   105→    duplicatesRemoved: 0,
+   106→    outliersClipped: 0,
+   107→    typeConversions: 0,
+   108→  };
+   109→
+   110→  const issues: QualityIssue[] = [];
+   111→  let processedData = [...data];
+   112→  const originalLength = processedData.length;
+   113→
+   114→  // Count and handle missing values
+   115→  const missingIndices: number[] = [];
+   116→  processedData.forEach((val, idx) => {
+   117→    if (val === null || val === undefined || isNaN(val)) {
+   118→      missingIndices.push(idx);
+   119→      issues.push({
+   120→        type: QualityIssueType.MISSING_VALUE,
+   121→        affectedFeatures: [`index_${idx}`],
+   122→        severity: 'warning',
+   123→        description: `Missing value at index ${idx}`,
+   124→      });
+   125→    }
+   126→  });
+   127→
+   128→  if (handleMissing && missingIndices.length > 0) {
+   129→    const validValues = processedData.filter(
+   130→      (val) => val !== null && val !== undefined && !isNaN(val)
+   131→    ) as number[];
+   132→
+   133→    let fillValue: number;
+   134→
+   135→    switch (missingStrategy) {
+   136→      case MissingValueStrategy.MEAN_IMPUTATION:
+   137→        fillValue = mean(validValues);
+   138→        break;
+   139→      case MissingValueStrategy.MEDIAN_IMPUTATION:
+   140→        fillValue = median(validValues);
+   141→        break;
+   142→      case MissingValueStrategy.MODE_IMPUTATION:
+   143→        fillValue = mode(validValues);
+   144→        break;
+   145→      case MissingValueStrategy.CONSTANT:
+   146→        fillValue = imputationConstant;
+   147→        break;
+   148→      default:
+   149→        fillValue = median(validValues);
+   150→    }
+   151→
+   152→    missingIndices.forEach((idx) => {
+   153→      processedData[idx] = fillValue;
+   154→      stats.missingValuesFilled++;
+   155→    });
+   156→
+   157→    logger.debug(`Filled ${missingIndices.length} missing values using ${missingStrategy}`);
+   158→  }
+   159→
+   160→  // Filter out remaining nulls if not handling or strategy was DROP_ROWS
+   161→  const beforeFilterLength = processedData.length;
+   162→  processedData = processedData.filter(
+   163→    (val) => val !== null && val !== undefined && !isNaN(val)
+   164→  ) as number[];
+   165→  stats.missingValuesFilled += beforeFilterLength - processedData.length;
+   166→
+   167→  // Clip outliers if requested
+   168→  if (clipOutliers && processedData.length > 0) {
+   169→    const { q1, q3 } = quartiles(processedData as number[]);
+   170→    const iqr = q3 - q1;
+   171→    const lowerBound = q1 - iqrMultiplier * iqr;
+   172→    const upperBound = q3 + iqrMultiplier * iqr;
+   173→
+   174→    processedData = processedData.map((val) => {
+   175→      if (typeof val === 'number') {
+   176→        if (val < lowerBound || val > upperBound) {
+   177→          stats.outliersClipped++;
+   178→          return Math.max(lowerBound, Math.min(upperBound, val));
+   179→        }
+   180→      }
+   181→      return val;
+   182→    }) as number[];
+   183→
+   184→    logger.debug(`Clipped ${stats.outliersClipped} outliers`);
+   185→  }
+   186→
+   187→  return {
+   188→    data: processedData,
+   189→    originalLength,
+   190→    processedLength: processedData.length,
+   191→    rowsRemoved: originalLength - processedData.length,
+   192→    issuesHandled: issues,
+   193→    stats,
+   194→  };
+   195→}
+   196→
+   197→/**
+   198→ * Preprocess a record-based dataset
+   199→ * 
+   200→ * @param data - Array of record objects
+   201→ * @param numericFields - Fields to treat as numeric
+   202→ * @param options - Preprocessing configuration
+   203→ * @returns Preprocessing result with processed records
+   204→ */
+   205→export function preprocessRecords<T extends Record<string, unknown>>(
+   206→  data: T[],
+   207→  numericFields: string[],
+   208→  options: PreprocessingOptions = {}
+   209→): PreprocessingResult<T> {
+   210→  const {
+   211→    removeDuplicates = true,
+   212→    handleMissing = true,
+   213→    missingStrategy = MissingValueStrategy.MEDIAN_IMPUTATION,
+   214→  } = options;
+   215→
+   216→  const stats: PreprocessingStats = {
+   217→    missingValuesFilled: 0,
+   218→    duplicatesRemoved: 0,
+   219→    outliersClipped: 0,
+   220→    typeConversions: 0,
+   221→  };
+   222→
+   223→  const issues: QualityIssue[] = [];
+   224→  let processedData = JSON.parse(JSON.stringify(data)) as T[];
+   225→  const originalLength = processedData.length;
+   226→
+   227→  // Remove duplicates if requested
+   228→  if (removeDuplicates) {
+   229→    const seen = new Set<string>();
+   230→    const unique: T[] = [];
+   231→
+   232→    for (const record of processedData) {
+   233→      const key = JSON.stringify(record);
+   234→      if (!seen.has(key)) {
+   235→        seen.add(key);
+   236→        unique.push(record);
+   237→      } else {
+   238→        stats.duplicatesRemoved++;
+   239→        issues.push({
+   240→          type: QualityIssueType.DUPLICATE,
+   241→          affectedFeatures: Object.keys(record),
+   242→          severity: 'warning',
+   243→          description: 'Duplicate record removed',
+   244→        });
+   245→      }
+   246→    }
+   247→
+   248→    processedData = unique;
+   249→    logger.debug(`Removed ${stats.duplicatesRemoved} duplicate records`);
+   250→  }
+   251→
+   252→  // Handle missing values for numeric fields
+   253→  if (handleMissing) {
+   254→    for (const field of numericFields) {
+   255→      const fieldValues = processedData
+   256→        .map((r) => r[field])
+   257→        .filter((v) => v !== null && v !== undefined && v !== '')
+   258→        .map((v) => Number(v))
+   259→        .filter((v) => !isNaN(v));
+   260→
+   261→      if (fieldValues.length === 0) continue;
+   262→
+   263→      let fillValue: number;
+   264→      switch (missingStrategy) {
+   265→        case MissingValueStrategy.MEAN_IMPUTATION:
+   266→          fillValue = mean(fieldValues);
+   267→          break;
+   268→        case MissingValueStrategy.MEDIAN_IMPUTATION:
+   269→          fillValue = median(fieldValues);
+   270→          break;
+   271→        default:
+   272→          fillValue = median(fieldValues);
+   273→      }
+   274→
+   275→      for (const record of processedData) {
+   276→        const val = record[field];
+   277→        if (
+   278→          val === null ||
+   279→          val === undefined ||
+   280→          val === '' ||
+   281→          (typeof val === 'string' && isNaN(Number(val)))
+   282→        ) {
+   283→          record[field] = fillValue as unknown as T[Extract<keyof T, string>];
+   284→          stats.missingValuesFilled++;
+   285→        }
+   286→      }
+   287→    }
+   288→  }
+   289→
+   290→  return {
+   291→    data: processedData,
+   292→    originalLength,
+   293→    processedLength: processedData.length,
+   294→    rowsRemoved: originalLength - processedData.length,
+   295→    issuesHandled: issues,
+   296→    stats,
+   297→  };
+   298→}
+   299→
+   300→// ============== Feature Scaling Functions ==============
+   301→
+   302→/** Parameters for min-max scaling */
+   303→export interface MinMaxParams {
+   304→  min: number;
+   305→  max: number;
+   306→  dataMin: number;
+   307→  dataMax: number;
+   308→}
+   309→
+   310→/** Parameters for standardization (z-score) */
+   311→export interface StandardizationParams {
+   312→  mean: number;
+   313→  std: number;
+   314→}
+   315→
+   316→/** Parameters for robust scaling */
+   317→export interface RobustScalingParams {
+   318→  median: number;
+   319→  iqr: number;
+   320→}
+   321→
+   322→/**
+   323→ * Scale features using Min-Max normalization
+   324→ * Scales values to [min, max] range (typically [0, 1])
+   325→ * 
+   326→ * Formula: X_scaled = (X - X_min) / (X_max - X_min) * (max - min) + min
+   327→ * 
+   328→ * @param data - Array of numeric values to scale
+   329→ * @param targetMin - Target minimum value (default: 0)
+   330→ * @param targetMax - Target maximum value (default: 1)
+   331→ * @returns Tuple of [scaled data, scaling parameters for inverse transform]
+   332→ * 
+   333→ * @example
+   334→ * ```typescript
+   335→ * const [scaled, params] = minMaxScale([1, 2, 3, 4, 100]);
+   336→ * // scaled ≈ [0, 0.01, 0.02, 0.03, 1]
+   337→ * // Use params to inverse_transform later
+   338→ * ```
+   339→ */
+   340→export function minMaxScale(
+   341→  data: number[],
+   342→  targetMin: number = 0,
+   343→  targetMax: number = 1
+   344→): [number[], MinMaxParams] {
+   345→  if (data.length === 0) {
+   346→    return [[], { min: targetMin, max: targetMax, dataMin: 0, dataMax: 1 }];
+   347→  }
+   348→
+   349→  const dataMin = Math.min(...data);
+   350→  const dataMax = Math.max(...data);
+   351→  const dataRange = dataMax - dataMin;
+   352→
+   353→  const params: MinMaxParams = {
+   354→    min: targetMin,
+   355→    max: targetMax,
+   356→    dataMin,
+   357→    dataMax,
+   358→  };
+   359→
+   360→  if (dataRange === 0) {
+   361→    // All values are the same, scale to midpoint
+   362→    const scaled = data.map(() => (targetMin + targetMax) / 2);
+   363→    return [scaled, params];
+   364→  }
+   365→
+   366→  const scaled = data.map((value) => {
+   367→    return ((value - dataMin) / dataRange) * (targetMax - targetMin) + targetMin;
+   368→  });
+   369→
+   370→  logger.debug(
+   371→    `MinMax scaling applied: range [${dataMin}, ${dataMax}] -> [${targetMin}, ${targetMax}]`
+   372→  );
+   373→
+   374→  return [scaled, params];
+   375→}
+   376→
+   377→/**
+   378→ * Inverse transform min-max scaled data back to original scale
+   379→ * 
+   380→ * @param scaledData - Min-max scaled data
+   381→ * @params - Scaling parameters from original transformation
+   382→ * @returns Data in original scale
+   383→ */
+   384→export function inverseMinMaxScale(
+   385→  scaledData: number[],
+   386→  params: MinMaxParams
+   387→): number[] {
+   388→  const { min, max, dataMin, dataMax } = params;
+   389→  const targetRange = max - min;
+   390→  const dataRange = dataMax - dataMin;
+   391→
+   392→  if (targetRange === 0) {
+   393→    return scaledData.map(() => dataMin);
+   394→  }
+   395→
+   396→  return scaledData.map((value) => {
+   397→    return ((value - min) / targetRange) * dataRange + dataMin;
+   398→  });
+   399→}
+   400→
+   401→/**
+   402→ * Standardize features using Z-score normalization
+   403→ * Transforms data to have mean=0 and std=1
+   404→ * 
+   405→ * Formula: X_std = (X - μ) / σ
+   406→ * 
+   407→ * @param data - Array of numeric values to standardize
+   408→ * @returns Tuple of [standardized data, standardization parameters]
+   409→ * 
+   410→ * @example
+   411→ * ```typescript
+   412→ * const [standardized, params] = standardize([1, 2, 3, 4, 5]);
+   413→ * // standardized has mean≈0, std≈1
+   414→ * ```
+   415→ */
+   416→export function standardize(
+   417→  data: number[]
+   418→): [number[], StandardizationParams] {
+   419→  if (data.length === 0) {
+   420→    return [[], { mean: 0, std: 1 }];
+   421→  }
+   422→
+   423→  const mu = mean(data);
+   424→  const sigma = standardDeviation(data);
+   425→
+   426→  const params: StandardizationParams = {
+   427→    mean: mu,
+   428→    std: sigma,
+   429→  };
+   430→
+   431→  if (sigma === 0) {
+   432→    // All values are same, return zeros
+   433→    return [data.map(() => 0), params];
+   434→  }
+   435→
+   436→  const standardized = data.map((value) => (value - mu) / sigma);
+   437→
+   438→  logger.debug(
+   439→    `Standardization applied: mean=${mu.toFixed(4)}, std=${sigma.toFixed(4)}`
+   440→  );
+   441→
+   442→  return [standardized, params];
+   443→}
+   444→
+   445→/**
+   446→ * Inverse transform standardized data back to original scale
+   447→ * 
+   448→ * @param standardizedData - Z-score standardized data
+   449→ * @params - Standardization parameters
+   450→ * @returns Data in original scale
+   451→ */
+   452→export function inverseStandardize(
+   453→  standardizedData: number[],
+   454→  params: StandardizationParams
+   455→): number[] {
+   456→  const { mean: mu, std: sigma } = params;
+   457→
+   458→  return standardizedData.map((value) => value * sigma + mu);
+   459→}
+   460→
+   461→/**
+   462→ * Robust scaling using median and IQR
+   463→ * More resistant to outliers than min-max or z-score
+   464→ * 
+   465→ * Formula: X_robust = (X - median) / IQR
+   466→ * 
+   467→ * @param data - Array of numeric values
+   468→ * @returns Tuple of [robustly scaled data, scaling parameters]
+   469→ */
+   470→export function robustScale(
+   471→  data: number[]
+   472→): [number[], RobustScalingParams] {
+   473→  if (data.length === 0) {
+   474→    return [[], { median: 0, iqr: 1 }];
+   475→  }
+   476→
+   477→  const med = median(data);
+   478→  const { q1, q3 } = quartiles(data);
+   479→  const iqr = q3 - q1;
+   480→
+   481→  const params: RobustScalingParams = {
+   482→    median: med,
+   483→    iqr: iqr || 1, // Avoid division by zero
+   484→  };
+   485→
+   486→  if (iqr === 0) {
+   487→    return [data.map(() => 0), params];
+   488→  }
+   489→
+   490→  const scaled = data.map((value) => (value - med) / iqr);
+   491→
+   492→  logger.debug(
+   493→    `Robust scaling applied: median=${med.toFixed(4)}, IQR=${iqr.toFixed(4)}`
+   494→  );
+   495→
+   496→  return [scaled, params];
+   497→}
+   498→
+   499→/**
+   500→ * Apply scaling based on specified method
+   501→ * 
+   502→ * @param data - Numeric data to scale
+   503→ * @method - Normalization method to use
+   504→ * @returns Tuple of [scaled data, parameters]
+   505→ */
+   506→export function scaleFeatures(
+   507→  data: number[],
+   508→  method: NormalizationMethod
+   509→): [number[], MinMaxParams | StandardizationParams | RobustScalingParams] {
+   510→  switch (method) {
+   511→    case NormalizationMethod.MIN_MAX:
+   512→      return minMaxScale(data);
+   513→    case NormalizationMethod.STANDARD:
+   514→      return standardize(data);
+   515→    case NormalizationMethod.ROBUST:
+   516→      return robustScale(data);
+   517→    case NormalizationMethod.NONE:
+   518→    default:
+   519→      return [data, { min: 0, max: 1, dataMin: 0, dataMax: 1 }];
+   520→  }
+   521→}
+   522→
+   523→// ============== Matrix Operations ==============
+   524→
+   525→/**
+   526→ * Create a matrix (2D array) with given dimensions
+   527→ * 
+   528→ * @param rows - Number of rows
+   529→ * @param cols - Number of columns
+   530→ * @param fillValue - Value to fill (default: 0)
+   531→ * @returns Initialized matrix
+   532→ */
+   533→export function createMatrix(
+   534→  rows: number,
+   535→  cols: number,
+   536→  fillValue: number = 0
+   537→): number[][] {
+   538→  return Array.from({ length: rows }, () =>
+   539→    Array.from({ length: cols }, () => fillValue)
+   540→  );
+   541→}
+   542→
+   543→/**
+   544→ * Transpose a matrix (swap rows and columns)
+   545→ * 
+   546→ * @param matrix - Input matrix
+   547→ * @returns Transposed matrix
+   548→ */
+   549→export function transpose(matrix: number[][]): number[][] {
+   550→  if (matrix.length === 0) return [];
+   551→
+   552→  const rows = matrix.length;
+   553→  const cols = matrix[0].length;
+   554→  const result = createMatrix(cols, rows);
+   555→
+   556→  for (let i = 0; i < rows; i++) {
+   557→    for (let j = 0; j < cols; j++) {
+   558→      result[j][i] = matrix[i][j];
+   559→    }
+   560→  }
+   561→
+   562→  return result;
+   563→}
+   564→
+   565→/**
+   566→ * Multiply two matrices
+   567→ * 
+   568→ * @param a - First matrix (m x n)
+   569→ * @param b - Second matrix (n x p)
+   570→ * @returns Product matrix (m x p)
+   571→ * @throws Error if dimensions are incompatible
+   572→ */
+   573→export function matrixMultiply(a: number[][], b: number[][]): number[][] {
+   574→  if (a.length === 0 || b.length === 0) {
+   575→    return [];
+   576→  }
+   577→
+   578→  const aRows = a.length;
+   579→  const aCols = a[0].length;
+   580→  const bRows = b.length;
+   581→  const bCols = b[0].length;
+   582→
+   583→  if (aCols !== bRows) {
+   584→    throw new Error(
+   585→      `Matrix dimension mismatch: ${aRows}x${aCols} cannot multiply with ${bRows}x${bCols}`
+   586→    );
+   587→  }
+   588→
+   589→  const result = createMatrix(aRows, bCols);
+   590→
+   591→  for (let i = 0; i < aRows; i++) {
+   592→    for (let j = 0; j < bCols; j++) {
+   593→      let sum = 0;
+   594→      for (let k = 0; k < aCols; k++) {
+   595→        sum += a[i][k] * b[k][j];
+   596→      }
+   597→      result[i][j] = sum;
+   598→    }
+   599→  }
+   600→
+   601→  return result;
+   602→}
+   603→
+   604→/**
+   605→ * Multiply matrix by vector
+   606→ * 
+   607→ * @param matrix - Input matrix (m x n)
+   608→ * @param vector - Vector (n x 1)
+   609→ * @returns Result vector (m x 1)
+   610→ */
+   611→export function matrixVectorMultiply(
+   612→  matrix: number[][],
+   613→  vector: number[]
+   614→): number[] {
+   615→  if (matrix.length === 0) return [];
+   616→
+   617→  const rows = matrix.length;
+   618→  const cols = matrix[0].length;
+   619→
+   620→  if (cols !== vector.length) {
+   621→    throw new Error(
+   622→      `Dimension mismatch: matrix has ${cols} columns but vector has ${vector.length} elements`
+   623→    );
+   624→  }
+   625→
+   626→  const result = new Array(rows).fill(0);
+   627→
+   628→  for (let i = 0; i < rows; i++) {
+   629→    let sum = 0;
+   630→    for (let j = 0; j < cols; j++) {
+   631→      sum += matrix[i][j] * vector[j];
+   632→    }
+   633→    result[i] = sum;
+   634→  }
+   635→
+   636→  return result;
+   637→}
+   638→
+   639→/**
+   640→ * Element-wise matrix addition
+   641→ * 
+   642→ * @param a - First matrix
+   643→ * @param b - Second matrix (same dimensions)
+   644→ * @returns Sum matrix
+   645→ */
+   646→export function matrixAdd(a: number[][], b: number[][]): number[][] {
+   647→  if (a.length === 0) return [];
+   648→
+   649→  const rows = a.length;
+   650→  const cols = a[0].length;
+   651→  const result = createMatrix(rows, cols);
+   652→
+   653→  for (let i = 0; i < rows; i++) {
+   654→    for (let j = 0; j < cols; j++) {
+   655→      result[i][j] = a[i][j] + b[i][j];
+   656→    }
+   657→  }
+   658→
+   659→  return result;
+   660→}
+   661→
+   662→/**
+   663→ * Element-wise matrix subtraction
+   664→ */
+   665→export function matrixSubtract(a: number[][], b: number[][]): number[][] {
+   666→  if (a.length === 0) return [];
+   667→
+   668→  const rows = a.length;
+   669→  const cols = a[0].length;
+   670→  const result = createMatrix(rows, cols);
+   671→
+   672→  for (let i = 0; i < rows; i++) {
+   673→    for (let j = 0; j < cols; j++) {
+   674→      result[i][j] = a[i][j] - b[i][j];
+   675→    }
+   676→  }
+   677→
+   678→  return result;
+   679→}
+   680→
+   681→/**
+   682→ * Calculate dot product of two vectors
+   683→ * 
+   684→ * @param a - First vector
+   685→ * @param b - Second vector (same length)
+   686→ * @returns Dot product scalar
+   687→ */
+   688→export function dotProduct(a: number[], b: number[]): number {
+   689→  if (a.length !== b.length) {
+   690→    throw new Error('Vectors must have the same length');
+   691→  }
+   692→
+   693→  return a.reduce((sum, val, idx) => sum + val * b[idx], 0);
+   694→}
+   695→
+   696→/**
+   697→ * Calculate Euclidean distance between two vectors
+   698→ * 
+   699→ * @param a - First vector
+   700→ * @param b - Second vector
+   701→ * @returns Euclidean distance
+   702→ */
+   703→export function euclideanDistance(a: number[], b: number[]): number {
+   704→  if (a.length !== b.length) {
+   705→    throw new Error('Vectors must have the same length');
+   706→  }
+   707→
+   708→  const sumOfSquares = a.reduce((sum, val, idx) => {
+   709→    const diff = val - b[idx];
+   710→    return sum + diff * diff;
+   711→  }, 0);
+   712→
+   713→  return Math.sqrt(sumOfSquares);
+   714→}
+   715→
+   716→/**
+   717→ * Calculate Manhattan (L1) distance between two vectors
+   718→ */
+   719→export function manhattanDistance(a: number[], b: number[]): number {
+   720→  if (a.length !== b.length) {
+   721→    throw new Error('Vectors must have the same length');
+   722→  }
+   723→
+   724→  return a.reduce((sum, val, idx) => sum + Math.abs(val - b[idx]), 0);
+   725→}
+   726→
+   727→/**
+   728→ * Calculate cosine similarity between two vectors
+   729→ * 
+   730→ * @returns Value between -1 and 1 (1 = identical direction)
+   731→ */
+   732→export function cosineSimilarity(a: number[], b: number[]): number {
+   733→  if (a.length !== b.length) {
+   734→    throw new Error('Vectors must have the same length');
+   735→  }
+   736→
+   737→  const dot = dotProduct(a, b);
+   738→  const normA = Math.sqrt(dotProduct(a, a));
+   739→  const normB = Math.sqrt(dotProduct(b, b));
+   740→
+   741→  if (normA === 0 || normB === 0) {
+   742→    return 0;
+   743→  }
+   744→
+   745→  return dot / (normA * normB);
+   746→}
+   747→
+   748→/**
+   749→ * Compute covariance between two arrays
+   750→ */
+   751→export function covariance(x: number[], y: number[]): number {
+   752→  if (x.length !== y.length || x.length === 0) {
+   753→    return 0;
+   754→  }
+   755→
+   756→  const n = x.length;
+   757→  const meanX = mean(x);
+   758→  const meanY = mean(y);
+   759→
+   760→  let sum = 0;
+   761→  for (let i = 0; i < n; i++) {
+   762→    sum += (x[i] - meanX) * (y[i] - meanY);
+   763→  }
+   764→
+   765→  return sum / (n - 1); // Sample covariance
+   766→}
+   767→
+   768→/**
+   769→ * Compute Pearson correlation coefficient
+   770→ */
+   771→export function pearsonCorrelation(x: number[], y: number[]): number {
+   772→  const cov = covariance(x, y);
+   773→  const stdX = standardDeviation(x);
+   774→  const stdY = standardDeviation(y);
+   775→
+   776→  if (stdX === 0 || stdY === 0) {
+   777→    return 0;
+   778→  }
+   779→
+   780→  return cov / (stdX * stdY);
+   781→}
+   782→
+   783→// ============== Statistical Helper Functions ==============
+   784→
+   785→/**
+   786→ * Calculate arithmetic mean of an array
+   787→ */
+   788→export function mean(data: number[]): number {
+   789→  if (data.length === 0) return 0;
+   790→  return data.reduce((sum, val) => sum + val, 0) / data.length;
+   791→}
+   792→
+   793→/**
+   794→ * Calculate median of an array
+   795→ */
+   796→export function median(data: number[]): number {
+   797→  if (data.length === 0) return 0;
+   798→
+   799→  const sorted = [...data].sort((a, b) => a - b);
+   800→  const mid = Math.floor(sorted.length / 2);
+   801→
+   802→  if (sorted.length % 2 === 0) {
+   803→    return (sorted[mid - 1] + sorted[mid]) / 2;
+   804→  }
+   805→
+   806→  return sorted[mid];
+   807→}
+   808→
+   809→/**
+   810→ * Calculate mode (most frequent value) of an array
+   811→ */
+   812→export function mode(data: number[]): number {
+   813→  if (data.length === 0) return 0;
+   814→
+   815→  const frequency = new Map<number, number>();
+   816→  let maxFreq = 0;
+   817→  let modeVal = data[0];
+   818→
+   819→  for (const val of data) {
+   820→    const freq = (frequency.get(val) || 0) + 1;
+   821→    frequency.set(val, freq);
+   822→
+   823→    if (freq > maxFreq) {
+   824→      maxFreq = freq;
+   825→      modeVal = val;
+   826→    }
+   827→  }
+   828→
+   829→  return modeVal;
+   830→}
+   831→
+   832→/**
+   833→ * Calculate population standard deviation
+   834→ */
+   835→export function standardDeviation(data: number[]): number {
+   836→  if (data.length <= 1) return 0;
+   837→
+   838→  const mu = mean(data);
+   839→  const squaredDiffs = data.map((val) => (val - mu) ** 2);
+   840→  const variance = squaredDiffs.reduce((sum, val) => sum + val, 0) / data.length;
+   841→
+   842→  return Math.sqrt(variance);
+   843→}
+   844→
+   845→/**
+   846→ * Calculate sample standard deviation (using n-1)
+   847→ */
+   848→export function sampleStdDev(data: number[]): number {
+   849→  if (data.length <= 1) return 0;
+   850→
+   851→  const mu = mean(data);
+   852→  const squaredDiffs = data.map((val) => (val - mu) ** 2);
+   853→  const variance =
+   854→    squaredDiffs.reduce((sum, val) => sum + val, 0) / (data.length - 1);
+   855→
+   856→  return Math.sqrt(variance);
+   857→}
+   858→
+   859→/**
+   860→ * Calculate variance
+   861→ */
+   862→export function variance(data: number[]): number {
+   863→  if (data.length === 0) return 0;
+   864→
+   865→  const mu = mean(data);
+   866→  return data.reduce((sum, val) => sum + (val - mu) ** 2, 0) / data.length;
+   867→}
+   868→
+   869→/**
+   870→ * Calculate quartiles (Q1 and Q3)
+   871→ * 
+   872→ * @returns Object with q1 and q3 values
+   873→ */
+   874→export function quartiles(data: number[]): { q1: number; q3: number } {
+   875→  if (data.length === 0) return { q1: 0, q3: 0 };
+   876→
+   877→  const sorted = [...data].sort((a, b) => a - b);
+   878→  const n = sorted.length;
+   879→
+   880→  const q1Index = Math.floor(n * 0.25);
+   881→  const q3Index = Math.floor(n * 0.75);
+   882→
+   883→  return {
+   884→    q1: sorted[q1Index],
+   885→    q3: sorted[q3Index],
+   886→  };
+   887→}
+   888→
+   889→/**
+   890→ * Calculate interquartile range (IQR)
+   891→ */
+   892→export function iqr(data: number[]): number {
+   893→  const { q1, q3 } = quartiles(data);
+   894→  return q3 - q1;
+   895→}
+   896→
+   897→/**
+   898→ * Find minimum value in array
+   899→ */
+   900→export function minValue(data: number[]): number {
+   901→  if (data.length === 0) return 0;
+   902→  return Math.min(...data);
+   903→}
+   904→
+   905→/**
+   906→ * Find maximum value in array
+   907→ */
+   908→export function maxValue(data: number[]): number {
+   909→  if (data.length === 0) return 0;
+   910→  return Math.max(...data);
+   911→}
+   912→
+   913→/**
+   914→ * Calculate range (max - min)
+   915→ */
+   916→export function dataRange(data: number[]): number {
+   917→  if (data.length === 0) return 0;
+   918→  return maxValue(data) - minValue(data);
+   919→}
+   920→
+   921→/**
+   922→ * Calculate percentile of a value in a distribution
+   923→ * 
+   924→ * @param value - Value to find percentile for
+   925→ * @param data - Reference dataset
+   926→ * @returns Percentile (0-100)
+   927→ */
+   928→export function percentile(value: number, data: number[]): number {
+   929→  if (data.length === 0) return 0;
+   930→
+   931→  const sorted = [...data].sort((a, b) => a - b);
+   932→  const belowCount = sorted.filter((v) => v < value).length;
+   933→
+   934→  return (belowCount / sorted.length) * 100;
+   935→}
+   936→
+   937→/**
+   938→ * Get value at a specific percentile
+   939→ * 
+   940→ * @param data - Dataset
+   941→ * @param pct - Percentile (0-100)
+   942→ * @returns Value at that percentile
+   943→ */
+   944→export function percentileValue(data: number[], pct: number): number {
+   945→  if (data.length === 0) return 0;
+   946→
+   947→  const sorted = [...data].sort((a, b) => a - b);
+   948→  const index = (pct / 100) * (sorted.length - 1);
+   949→  const lower = Math.floor(index);
+   950→  const upper = Math.ceil(index);
+   951→
+   952→  if (lower === upper) {
+   953→    return sorted[lower];
+   954→  }
+   955→
+   956→  // Linear interpolation
+   957→  const weight = index - lower;
+   958→  return sorted[lower] * (1 - weight) + sorted[upper] * weight;
+   959→}
+   960→
+   961→/**
+   962→ * Calculate skewness (measure of asymmetry)
+   963→ */
+   964→export function skewness(data: number[]): number {
+   965→  if (data.length < 3) return 0;
+   966→
+   967→  const n = data.length;
+   968→  const mu = mean(data);
+   969→  const sigma = standardDeviation(data);
+   970→
+   971→  if (sigma === 0) return 0;
+   972→
+   973→  const cubedDiffs = data.map((val) => ((val - mu) / sigma) ** 3);
+   974→  const sum = cubedDiffs.reduce((a, b) => a + b, 0);
+   975→
+   976→  return (n / ((n - 1) * (n - 2))) * sum;
+   977→}
+   978→
+   979→/**
+   980→ * Calculate kurtosis (measure of tailedness)
+   981→ */
+   982→export function kurtosis(data: number[]): number {
+   983→  if (data.length < 4) return 0;
+   984→
+   985→  const n = data.length;
+   986→  const mu = mean(data);
+   987→  const sigma = standardDeviation(data);
+   988→
+   989→  if (sigma === 0) return 0;
+   990→
+   991→  const fourthDiffs = data.map((val) => ((val - mu) / sigma) ** 4);
+   992→  const sum = fourthDiffs.reduce((a, b) => a + b, 0);
+   993→
+   994→  // Excess kurtosis (normal distribution = 0)
+   995→  return ((n * (n + 1)) / ((n - 1) * (n - 2) * (n - 3))) * sum -
+   996→    (3 * (n - 1) ** 2) / ((n - 2) * (n - 3));
+   997→}
+   998→
+   999→/**
+  1000→ * Generate summary statistics for a dataset
+  1001→ */
+  1002→export function describe(data: number[]): Record<string, number> {
+  1003→  if (data.length === 0) {
+  1004→    return {
+  1005→      count: 0,
+  1006→      mean: 0,
+  1007→      std: 0,
+  1008→      min: 0,
+  1009→      max: 0,
+  1010→      median: 0,
+  1011→      q1: 0,
+  1012→      q3: 0,
+  1013→      skewness: 0,
+  1014→      kurtosis: 0,
+  1015→    };
+  1016→  }
+  1017→
+  1018→  const { q1, q3 } = quartiles(data);
+  1019→
+  1020→  return {
+  1021→    count: data.length,
+  1022→    mean: mean(data),
+  1023→    std: standardDeviation(data),
+  1024→    min: minValue(data),
+  1025→    max: maxValue(data),
+  1026→    median: median(data),
+  1027→    q1,
+  1028→    q3,
+  1029→    skewness: skewness(data),
+  1030→    kurtosis: kurtosis(data),
+  1031→  };
+  1032→}
+  1033→
+  1034→// ============== Validation Utilities ==============
+  1035→
+  1036→/**
+  1037→ * Validation rule definition
+  1038→ */
+  1039→export interface ValidationRule {
+  1040→  /** Rule name */
+  1041→  name: string;
+  1042→  /** Validation function returning error message or null if valid */
+  1043→  validate: (value: unknown, context?: Record<string, unknown>) => string | null;
+  1044→  /** Severity level */
+  1045→  severity: 'error' | 'warning';
+  1046→  /** Whether this rule should fail validation entirely */
+  1047→  fatal?: boolean;
+  1048→}
+  1049→
+  1050→/**
+  1051→ * Result of validation check
+  1052→ */
+  1053→export interface ValidationResult {
+  1054→  /** Whether all validations passed */
+  1055→  isValid: boolean;
+  1056→  /** Errors found (fatal issues) */
+  1057→  errors: ValidationError[];
+  1058→  /** Warnings found (non-fatal issues) */
+  1059→  warnings: ValidationError[];
+  1060→  /** Summary message */
+  1061→  summary: string;
+  1062→}
+  1063→
+  1064→/** Individual validation error/warning */
+  1065→export interface ValidationError {
+  1066→  /** Rule that triggered */
+  1067→  ruleName: string;
+  1068→  /** Message describing the issue */
+  1069→  message: string;
+  1070→  /** Severity level */
+  1071→  severity: 'error' | 'warning';
+  1072→  /** Path to the invalid field (for nested objects) */
+  1073→  path?: string;
+  1074→}
+  1075→
+  1076→/**
+  1077→ * Validate a value against multiple rules
+  1078→ * 
+  1079→ * @param value - Value to validate
+  1080→ * @param rules - Array of validation rules
+  1081→ * @param context - Additional context for validation
+  1082→ * @returns Validation result with any errors/warnings
+  1083→ */
+  1084→export function validate(
+  1085→  value: unknown,
+  1086→  rules: ValidationRule[],
+  1087→  context?: Record<string, unknown>
+  1088→): ValidationResult {
+  1089→  const errors: ValidationError[] = [];
+  1090→  const warnings: ValidationError[] = [];
+  1091→
+  1092→  for (const rule of rules) {
+  1093→    const errorMessage = rule.validate(value, context);
+  1094→    if (errorMessage !== null) {
+  1095→      const issue: ValidationError = {
+  1096→        ruleName: rule.name,
+  1097→        message: errorMessage,
+  1098→        severity: rule.severity,
+  1099→      };
+  1100→
+  1101→      if (rule.severity === 'error') {
+  1102→        errors.push(issue);
+  1103→      } else {
+  1104→        warnings.push(issue);
+  1105→      }
+  1106→    }
+  1107→  }
+  1108→
+  1109→  const isValid = errors.length === 0;
+  1110→  const totalIssues = errors.length + warnings.length;
+  1111→
+  1112→  return {
+  1113→    isValid,
+  1114→    errors,
+  1115→    warnings,
+  1116→    summary: isValid
+  1117→      ? 'Validation passed'
+  1118→      : `Validation failed with ${errors.length} error(s) and ${warnings.length} warning(s)`,
+  1119→  };
+  1120→}
+  1121→
+  1122→/**
+  1123→ * Common validation rules for ML data
+  1124→ */
+  1125→export const ValidationRules = {
+  1126→  /**
+  1127→   * Check if value is a finite number
+  1128→   */
+  1129→  isFiniteNumber: (): ValidationRule => ({
+  1130→    name: 'isFiniteNumber',
+  1131→    severity: 'error',
+  1132→    fatal: true,
+  1133→    validate: (value) => {
+  1134→      if (typeof value !== 'number') return 'Value must be a number';
+  1135→      if (!isFinite(value)) return 'Value must be finite (not NaN or Infinity)';
+  1136→      return null;
+  1137→    },
+  1138→  }),
+  1139→
+  1140→  /**
+  1141→   * Check if value is within a range
+  1142→   */
+  1143→  isInRange: (min: number, max: number): ValidationRule => ({
+  1144→    name: 'isInRange',
+  1145→    severity: 'error',
+  1146→    validate: (value) => {
+  1147→      if (typeof value !== 'number') return 'Value must be a number';
+  1148→      if (value < min || value > max) {
+  1149→        return `Value must be between ${min} and ${max}`;
+  1150→      }
+  1151→      return null;
+  1152→    },
+  1153→  }),
+  1154→
+  1155→  /**
+  1156→   * Check if value is positive
+  1157→   */
+  1158→  isPositive: (): ValidationRule => ({
+  1159→    name: 'isPositive',
+  1160→    severity: 'error',
+  1161→    validate: (value) => {
+  1162→      if (typeof value !== 'number') return 'Value must be a number';
+  1163→      if (value <= 0) return 'Value must be positive';
+  1164→      return null;
+  1165→    },
+  1166→  }),
+  1167→
+  1168→  /**
+  1169→   * Check if string matches pattern
+  1170→   */
+  1171→  matchesPattern: (pattern: RegExp): ValidationRule => ({
+  1172→    name: 'matchesPattern',
+  1173→    severity: 'error',
+  1174→    validate: (value) => {
+  1175→      if (typeof value !== 'string') return 'Value must be a string';
+  1176→      if (!pattern.test(value)) return `Value does not match required pattern`;
+  1177→      return null;
+  1178→    },
+  1179→  }),
+  1180→
+  1181→  /**
+  1182→   * Check if array has minimum length
+  1183→   */
+  1184→  minLength: (min: number): ValidationRule => ({
+  1185→    name: 'minLength',
+  1186→    severity: 'error',
+  1187→    validate: (value) => {
+  1188→      if (!Array.isArray(value)) return 'Value must be an array';
+  1189→      if (value.length < min) return `Array must have at least ${min} elements`;
+  1190→      return null;
+  1191→    },
+  1192→  }),
+  1193→
+  1194→  /**
+  1195→   * Check if value is not null/undefined
+  1196→   */
+  1197→  isRequired: (): ValidationRule => ({
+  1198→    name: 'isRequired',
+  1199→    severity: 'error',
+  1200→    fatal: true,
+  1201→    validate: (value) => {
+  1202→      if (value === null || value === undefined) return 'Value is required';
+  1203→      return null;
+  1204→    },
+  1205→  }),
+  1206→
+  1207→  /**
+  1208→   * Check if probability is between 0 and 1
+  1209→   */
+  1210→  isValidProbability: (): ValidationRule => ({
+  1211→    name: 'isValidProbability',
+  1212→    severity: 'error',
+  1213→    validate: (value) => {
+  1214→      if (typeof value !== 'number') return 'Probability must be a number';
+  1215→      if (value < 0 || value > 1) return 'Probability must be between 0 and 1';
+  1216→      return null;
+  1217→    },
+  1218→  }),
+  1219→
+  1220→  /**
+  1221→   * Check if date is not in the future (for historical data)
+  1222→   */
+  1223→  isNotFutureDate: (): ValidationRule => ({
+  1224→    name: 'isNotFutureDate',
+  1225→    severity: 'warning',
+  1226→    validate: (value) => {
+  1227→      if (!(value instanceof Date)) return 'Value must be a Date';
+  1228→      if (value > new Date()) return 'Date should not be in the future';
+  1229→      return null;
+  1230→    },
+  1231→  }),
+  1232→
+  1233→  /**
+  1234→   * Check for reasonable transaction amount
+  1235→   */
+  1236→  isReasonableAmount: (maxAmount: number = 1000000): ValidationRule => ({
+  1237→    name: 'isReasonableAmount',
+  1238→    severity: 'warning',
+  1239→    validate: (value) => {
+  1240→      if (typeof value !== 'number') return 'Amount must be a number';
+  1241→      if (value > maxAmount) {
+  1242→        return `Amount exceeds reasonable limit of ${maxAmount}`;
+  1243→      }
+  1244→      if (value <= 0) return 'Amount must be positive';
+  1245→      return null;
+  1246→    },
+  1247→  }),
+  1248→};
+  1249→
+  1250→/**
+  1251→ * Validate a complete feature vector
+  1252→ * 
+  1253→ * @param features - Feature key-value pairs
+  1254→ * @param schema - Expected types for each feature
+  1255→ * @returns Validation result
+  1256→ */
+  1257→export function validateFeatureVector(
+  1258→  features: Record<string, unknown>,
+  1259→  schema: Record<string, FeatureType>
+  1260→): ValidationResult {
+  1261→  const rules: ValidationRule[] = [];
+  1262→  const entries = Object.entries(schema);
+  1263→
+  1264→  for (const [key, type] of entries) {
+  1265→    switch (type) {
+  1266→      case FeatureType.NUMERIC:
+  1267→        rules.push({
+  1268→          name: `${key}_numeric`,
+  1269→          severity: 'error',
+  1270→          validate: (val) => {
+  1271→            const value = val?.[key as keyof typeof val];
+  1272→            if (value === undefined || value === null) {
+  1273→              return null; // Let isRequired handle this
+  1274→            }
+  1275→            if (typeof value !== 'number' || isNaN(value)) {
+  1276→              return `${key} must be a valid number`;
+  1277→            }
+  1278→            return null;
+  1279→          },
+  1280→        });
+  1281→        break;
+  1282→      case FeatureType.BOOLEAN:
+  1283→        rules.push({
+  1284→          name: `${key}_boolean`,
+  1285→          severity: 'error',
+  1286→          validate: (val) => {
+  1287→            const value = val?.[key as keyof typeof val];
+  1288→            if (value === undefined || value === null) return null;
+  1289→            if (typeof value !== 'boolean') {
+  1290→              return `${key} must be a boolean`;
+  1291→            }
+  1292→            return null;
+  1293→          },
+  1294→        });
+  1295→        break;
+  1296→      case FeatureType.CATEGORICAL:
+  1297→        rules.push({
+  1298→          name: `${key}_categorical`,
+  1299→          severity: 'error',
+  1300→          validate: (val) => {
+  1301→            const value = val?.[key as keyof typeof val];
+  1302→            if (value === undefined || value === null) return null;
+  1303→            if (typeof value !== 'string' && typeof value !== 'number') {
+  1304→              return `${key} must be a categorical value`;
+  1305→            }
+  1306→            return null;
+  1307→          },
+  1308→        });
+  1309→        break;
+  1310→    }
+  1311→  }
+  1312→
+  1313→  return validate(features, rules);
+  1314→}
+  1315→
+  1316→// ============== Hashing & Caching Utilities ==============
+  1317→
+  1318→/**
+  1319→ * Generate a simple hash string from input data for cache keys
+  1320→ * Uses a basic FNV-1a hash implementation
+  1321→ * 
+  1322→ * @param data - Data to hash
+  1323→ * @returns Hexadecimal hash string
+  1324→ */
+  1325→export function generateHash(data: unknown): string {
+  1326→  const str = JSON.stringify(data);
+  1327→  
+  1328→  let hash = 2166136261; // FNV offset basis
+  1329→  
+  1330→  for (let i = 0; i < str.length; i++) {
+  1331→    hash ^= str.charCodeAt(i);
+  1332→    hash = (hash * 16777619) >>> 0; // FNV prime, force unsigned
+  1333→  }
+  1334→  
+  1335→  return hash.toString(16).padStart(8, '0');
+  1336→}
+  1337→
+  1338→/**
+  1339→ * Simple in-memory cache with TTL support
+  1340→ */
+  1341→export class MLCache<T> {
+  1342→  private cache = new Map<string, { value: T; expiresAt: number }>();
+  1343→  private maxSize: number;
+  1344→  private defaultTTL: number;
+  1345→
+  1346→  constructor(maxSize: number = 1000, defaultTTL: number = 300000) {
+  1347→    this.maxSize = maxSize;
+  1348→    this.defaultTTL = defaultTTL;
+  1349→  }
+  1350→
+  1351→  /**
+  1352→   * Get cached value if exists and not expired
+  1353→   */
+  1354→  get(key: string): T | undefined {
+  1355→    const item = this.cache.get(key);
+  1356→    
+  1357→    if (!item) {
+  1358→      return undefined;
+  1359→    }
+  1360→    
+  1361→    if (Date.now() > item.expiresAt) {
+  1362→      this.cache.delete(key);
+  1363→      return undefined;
+  1364→    }
+  1365→    
+  1366→    return item.value;
+  1367→  }
+  1368→
+  1369→  /**
+  1370→   * Set value in cache with optional custom TTL
+  1371→   */
+  1372→  set(key: string, value: T, ttl?: number): void {
+  1373→    // Evict oldest entry if at capacity
+  1374→    if (this.cache.size >= this.maxSize && !this.cache.has(key)) {
+  1375→      const firstKey = this.cache.keys().next().value;
+  1376→      if (firstKey) {
+  1377→        this.cache.delete(firstKey);
+  1378→      }
+  1379→    }
+  1380→    
+  1381→    this.cache.set(key, {
+  1382→      value,
+  1383→      expiresAt: Date.now() + (ttl ?? this.defaultTTL),
+  1384→    });
+  1385→  }
+  1386→
+  1387→  /**
+  1388→   * Check if key exists and is not expired
+  1389→   */
+  1390→  has(key: string): boolean {
+  1391→    return this.get(key) !== undefined;
+  1392→  }
+  1393→
+  1394→  /**
+  1395→   * Delete a specific key
+  1396→   */
+  1397→  delete(key: string): boolean {
+  1398→    return this.cache.delete(key);
+  1399→  }
+  1400→
+  1401→  /**
+  1402→   * Clear all cached items
+  1403→   */
+  1404→  clear(): void {
+  1405→    this.cache.clear();
+  1406→  }
+  1407→
+  1408→  /**
+  1409→   * Get current cache size
+  1410→   */
+  1411→  get size(): number {
+  1412→    // Clean up expired entries
+  1413→    const now = Date.now();
+  1414→    for (const [key, item] of this.cache.entries()) {
+  1415→      if (now > item.expiresAt) {
+  1416→        this.cache.delete(key);
+  1417→      }
+  1418→    }
+  1419→    return this.cache.size;
+  1420→  }
+  1421→}
+  1422→
+  1423→// ============== Probability & Random Utilities ==============
+  1424→
+  1425→/**
+  1426→ * Seedable pseudo-random number generator (Mulberry32)
+  1427→ */
+  1428→export class SeededRandom {
+  1429→  private state: number;
+  1430→
+  1431→  constructor(seed: number = Date.now()) {
+  1432→    this.state = seed;
+  1433→  }
+  1434→
+  1435→  /**
+  1436→   * Generate random number between 0 and 1
+  1437→   */
+  1438→  next(): number {
+  1439→    this.state |= 0;
+  1440→    this.state = (this.state + 0x6d2b79f5) | 0;
+  1441→    let t = Math.imul(this.state ^ (this.state >>> 15), 1 | this.state);
+  1442→    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+  1443→    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  1444→  }
+  1445→
+  1446→  /**
+  1447→   * Generate random integer in range [min, max]
+  1448→   */
+  1449→  nextInt(min: number, max: number): number {
+  1450→    return Math.floor(this.next() * (max - min + 1)) + min;
+  1451→  }
+  1452→
+  1453→  /**
+  1454→   * Shuffle an array in place (Fisher-Yates)
+  1455→   */
+  1456→  shuffle<T>(array: T[]): T[] {
+  1457→    for (let i = array.length - 1; i > 0; i--) {
+  1458→      const j = this.nextInt(0, i);
+  1459→      [array[i], array[j]] = [array[j], array[i]];
+  1460→    }
+  1461→    return array;
+  1462→  }
+  1463→
+  1464→  /**
+  1465→   * Sample n elements from array without replacement
+  1466→   */
+  1467→  sample<T>(array: T[], n: number): T[] {
+  1468→    const copy = [...array];
+  1469→    this.shuffle(copy);
+  1470→    return copy.slice(0, Math.min(n, copy.length));
+  1471→  }
+  1472→}
+  1473→
+  1474→/**
+  1475→ * Sample from a categorical distribution
+  1476→ * 
+  1477→ * @param probabilities - Array of probabilities (must sum to ~1)
+  1478→ * @param rng - Optional seeded RNG
+  1479→ * @returns Index of sampled category
+  1480→ */
+  1481→export function sampleCategorical(
+  1482→  probabilities: number[],
+  1483→  rng?: SeededRandom
+  1484→): number {
+  1485→  const random = rng ? rng.next() : Math.random();
+  1486→  let cumulative = 0;
+  1487→
+  1488→  for (let i = 0; i < probabilities.length; i++) {
+  1489→    cumulative += probabilities[i];
+  1490→    if (random < cumulative) {
+  1491→      return i;
+  1492→    }
+  1493→  }
+  1494→
+  1495→  // Fallback to last category due to floating point
+  1496→  return probabilities.length - 1;
+  1497→}
+  1498→
+  1499→/**
+  1500→ * Softmax function for converting logits to probabilities
+  1501→ * 
+  1502→ * @param logits - Array of raw scores
+  1503→ * @returns Array of probabilities summing to 1
+  1504→ */
+  1505→export function softmax(logits: number[]): number[] {
+  1506→  if (logits.length === 0) return [];
+  1507→
+  1508→  // Subtract max for numerical stability
+  1509→  const maxLogit = Math.max(...logits);
+  1510→  const exps = logits.map((l) => Math.exp(l - maxLogit));
+  1511→  const sumExps = exps.reduce((a, b) => a + b, 0);
+  1512→
+  1513→  return exps.map((e) => e / sumExps);
+  1514→}
+  1515→
+  1516→/**
+  1517→ * Sigmoid activation function
+  1518→ */
+  1519→export function sigmoid(x: number): number {
+  1520→  return 1 / (1 + Math.exp(-x));
+  1521→}
+  1522→
+  1523→/**
+  1524→ * ReLU activation function
+  1525→ */
+  1526→export function relu(x: number): number {
+  1527→  return Math.max(0, x);
+  1528→}
+  1529→
+  1530→/**
+  1531→ * Leaky ReLU activation function
+  1532→ */
+  1533→export function leakyReLU(x: number, alpha: number = 0.01): number {
+  1534→  return x > 0 ? x : alpha * x;
+  1535→}
+  1536→

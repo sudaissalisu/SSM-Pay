@@ -1,0 +1,974 @@
+     1→/**
+     2→ * Shared ML Types for SSM-Pay Machine Learning Modules
+     3→ * 
+     4→ * @module ml/types
+     5→ * @description Common interfaces and types used across all ML modules including
+     6→ * fraud detection, transaction prediction, anomaly detection, risk engine,
+     7→ * and behavioral analytics.
+     8→ * 
+     9→ * @version 1.0.0
+    10→ * @since 2.0.0
+    11→ * @author SSM-Pay ML Engineering Team
+    12→ */
+    13→
+    14→// ============== Base Model Types ==============
+    15→
+    16→/**
+    17→ * Core model identifier and versioning information
+    18→ */
+    19→export interface ModelMetadata {
+    20→  /** Unique model identifier across the system */
+    21→  id: string;
+    22→  /** Human-readable model name */
+    23→  name: string;
+    24→  /** Semantic version string (e.g., "2.1.0") */
+    25→  version: string;
+    26→  /** Model type classification */
+    27→  type: ModelType;
+    28→  /** Model creation timestamp */
+    29→  createdAt: Date;
+    30→  /** Last training timestamp */
+    31→  lastTrainedAt?: Date;
+    32→  /** Training data period start */
+    33→  trainingDataStart?: Date;
+    34→  /** Training data period end */
+    35→  trainingDataEnd?: Date;
+    36→  /** Model status in the lifecycle */
+    37→  status: ModelStatus;
+    38→  /** Feature set used by this model */
+    39→  features: string[];
+    40→  /** Hyperparameters configuration */
+    41→  hyperparameters: Record<string, unknown>;
+    42→  /** Model description/purpose */
+    43→  description?: string;
+    44→  /** Tags for categorization and search */
+    45→  tags?: string[];
+    46→}
+    47→
+    48→/**
+    49→ * Classification of ML model types in the system
+    50→ */
+    51→export enum ModelType {
+    52→  /** Fraud detection and prevention models */
+    53→  FRAUD_DETECTION = 'fraud_detection',
+    54→  /** Transaction volume/value prediction models */
+    55→  TRANSACTION_PREDICTION = 'transaction_prediction',
+    56→  /** Anomaly and outlier detection models */
+    57→  ANOMALY_DETECTION = 'anomaly_detection',
+    58→  /** Risk assessment and scoring models */
+    59→  RISK_ENGINE = 'risk_engine',
+    60→  /** User behavior analysis models */
+    61→  BEHAVIORAL_ANALYTICS = 'behavioral_analytics',
+    62→  /** Ensemble or meta-models combining others */
+    63→  ENSEMBLE = 'ensemble'
+    64→}
+    65→
+    66→/**
+    67→ * Lifecycle status of an ML model
+    68→ */
+    69→export enum ModelStatus {
+    70→  /** Model is being trained */
+    71→  TRAINING = 'training',
+    72→  /** Model is ready for inference */
+    73→  ACTIVE = 'active',
+    74→  /** Model is being evaluated */
+    75→  EVALUATING = 'evaluating',
+    76→  /** Model is deprecated but available */
+    77→  DEPRECATED = 'deprecated',
+    78→  /** Model is disabled and not available */
+    79→  DISABLED = 'disabled',
+    80→  /** Model failed during training or evaluation */
+    81→  FAILED = 'failed'
+    82→}
+    83→
+    84→// ============== Prediction Result Types ==============
+    85→
+    86→/**
+    87→ * Base prediction result interface
+    88→ */
+    89→export interface BasePredictionResult {
+    90→  /** Unique prediction request identifier */
+    91→  predictionId: string;
+    92→  /** Model that generated this prediction */
+    93→  modelId: string;
+    94→  /** Timestamp when prediction was made */
+    95→  timestamp: Date;
+    96→  /** Processing time in milliseconds */
+    97→  processingTimeMs: number;
+    98→  /** Whether the prediction was successful */
+    99→  success: boolean;
+   100→  /** Error information if prediction failed */
+   101→  error?: PredictionError;
+   102→  /** Confidence score between 0 and 1 */
+   103→  confidence: number;
+   104→  /** Additional metadata about the prediction */
+   105→  metadata?: Record<string, unknown>;
+   106→}
+   107→
+   108→/**
+   109→ * Error details from a failed prediction
+   110→ */
+   111→export interface PredictionError {
+   112→  /** Error code */
+   113→  code: string;
+   114→  /** Human-readable error message */
+   115→  message: string;
+   116→  /** Additional error details */
+   117→  details?: Record<string, unknown>;
+   118→  /** Stack trace for debugging */
+   119→  stack?: string;
+   120→}
+   121→
+   122→/**
+   123→ * Classification prediction result with probability distribution
+   124→ */
+   125→export interface ClassificationResult extends BasePredictionResult {
+   126→  /** Predicted class label */
+   127→  predictedClass: string;
+   128→  /** Probability distribution over all classes */
+   129→  probabilities: Record<string, number>;
+   130→  /** Top-N alternative predictions */
+   131→  alternatives?: Array<{
+   132→    label: string;
+   133→    probability: number;
+   134→  }>;
+   135→}
+   136→
+   137→/**
+   138→ * Regression/numerical prediction result with uncertainty bounds
+   139→ */
+   140→export interface RegressionResult extends BasePredictionResult {
+   141→  /** Predicted numerical value */
+   142→  value: number;
+   143→  /** Lower bound of confidence interval */
+   144→  lowerBound: number;
+   145→  /** Upper bound of confidence interval */
+   146→  upperBound: number;
+   147→  /** Confidence interval level (e.g., 0.95 for 95%) */
+   148→  confidenceLevel: number;
+   149→  /** Standard deviation of prediction */
+   150→  standardDeviation?: number;
+   151→}
+   152→
+   153→/**
+   154→ * Anomaly detection result with severity scoring
+   155→ */
+   156→export interface AnomalyResult extends BasePredictionResult {
+   157→  /** Whether the input is anomalous */
+   158→  isAnomalous: boolean;
+   159→  /** Anomaly score (higher = more anomalous) */
+   160→  anomalyScore: number;
+   161→  /** Severity level of detected anomaly */
+   162→  severity: AnomalySeverity;
+   163→  /** Type of anomaly detected */
+   164→  anomalyType: AnomalyType;
+   165→  /** Contributing factors to anomaly score */
+   166→  factors?: AnomalyFactor[];
+   167→}
+   168→
+   169→/**
+   170→ * Severity levels for anomalies
+   171→ */
+   172→export enum AnomalySeverity {
+   173→  /** Minor deviation, likely benign */
+   174→  LOW = 'low',
+   175→  /** Moderate concern, worth monitoring */
+   176→  MEDIUM = 'medium',
+   177→  /** Significant anomaly, requires attention */
+   178→  HIGH = 'high',
+   179→  /** Critical anomaly, immediate action needed */
+   180→  CRITICAL = 'critical'
+   181→}
+   182→
+   183→/**
+   184→ * Categories of detectable anomalies
+   185→ */
+   186→export enum AnomalyType {
+   187→  /** Statistical outlier */
+   188→  STATISTICAL = 'statistical',
+   189→  /** Temporal pattern violation */
+   190→  TEMPORAL = 'temporal',
+   191→  /** Behavioral pattern deviation */
+   192→  BEHAVIORAL = 'behavioral',
+   193→  /** Geographic/location anomaly */
+   194→  GEOGRAPHIC = 'geographic',
+   195→  /** Device fingerprint mismatch */
+   196→  DEVICE = 'device',
+   197→  /** Velocity/rate anomaly */
+   198→  VELOCITY = 'velocity',
+   199→  /** Amount/value anomaly */
+   200→  AMOUNT = 'amount',
+   201→  /** Unknown/unclassified anomaly */
+   202→  UNKNOWN = 'unknown'
+   203→}
+   204→
+   205→/**
+   206→ * Individual factor contributing to anomaly detection
+   207→ */
+   208→export interface AnomalyFactor {
+   209→  /** Factor name/identifier */
+   210→  name: string;
+   211→  /** Factor's contribution to overall score */
+   212→  weight: number;
+   213→  /** Raw value of this factor */
+   214→  value: number;
+   215→  /** Expected normal range */
+   216→  expectedRange: [number, number];
+   217→  /** Human-readable description */
+   218→  description: string;
+   219→}
+   220→
+   221→// ============== Risk Assessment Types ==============
+   222→
+   223→/**
+   224→ * Comprehensive risk assessment result
+   225→ */
+   226→export interface RiskAssessmentResult extends BasePredictionResult {
+   227→  /** Overall risk score (0-100) */
+   228→  riskScore: number;
+   229→  /** Risk level classification */
+   230→  riskLevel: RiskLevel;
+   231→  /** Required authentication level */
+   232→  recommendedAction: RecommendedAction;
+   233→  /** Breakdown of risk factors */
+   234→  riskFactors: RiskFactor[];
+   235→  /** Historical context comparison */
+   236→  historicalContext?: HistoricalRiskContext;
+   237→}
+   238→
+   239→/**
+   240→ * Risk level classifications
+   241→ */
+   242→export enum RiskLevel {
+   243→  /** Score 0-29: Minimal risk */
+   244→  LOW = 'low',
+   245→  /** Score 30-59: Moderate risk */
+   246→  MEDIUM = 'medium',
+   247→  /** Score 60-79: High risk */
+   248→  HIGH = 'high',
+   249→  /** Score 80-100: Critical risk */
+   250→  CRITICAL = 'critical'
+   251→}
+   252→
+   253→/**
+   254→ * Actions recommended based on risk assessment
+   255→ */
+   256→export enum RecommendedAction {
+   257→  /** Allow transaction without additional steps */
+   258→  ALLOW = 'allow',
+   259→  /** Allow with step-up authentication */
+   260→  STEP_UP_AUTH = 'step_up_auth',
+   261→  /** Require manual review */
+   262→  REVIEW = 'review',
+   263→  /** Block transaction immediately */
+   264→  BLOCK = 'block',
+   265→  /** Require additional documentation */
+   266→  ADDITIONAL_DOCS = 'additional_docs'
+   267→}
+   268→
+   269→/**
+   270→ * Individual risk factor contribution
+   271→ */
+   272→export interface RiskFactor {
+   273→  /** Factor category */
+   274→  category: RiskCategory;
+   275→  /** Factor name */
+   276→  name: string;
+   277→  /** Contribution to total risk score */
+   278→  score: number;
+   279→  /** Maximum possible score for this factor */
+   280→  maxScore: number;
+   281→  /** Weight in overall calculation */
+   282→  weight: number;
+   283→  /** Description of why this factor triggered */
+   284→  description: string;
+   285→}
+   286→
+   287→/**
+   288→ * Categories of risk factors
+   289→ */
+   290→export enum RiskCategory {
+   291→  /** Transaction amount related risks */
+   292→  AMOUNT = 'amount',
+   293→  /** User behavior pattern risks */
+   294→  BEHAVIORAL = 'behavioral',
+   295→  /** Device-related risks */
+   296→  DEVICE = 'device',
+   297→  /** Geographic location risks */
+   298→  GEOGRAPHIC = 'geographic',
+   299→  /** Velocity/frequency risks */
+   300→  VELOCITY = 'velocity',
+   301→  /** Historical pattern risks */
+   302→  HISTORICAL = 'historical',
+   303→  /** External data risks */
+   304→  EXTERNAL = 'external'
+   305→}
+   306→
+   307→/**
+   308→ * Historical risk context for comparison
+   309→ */
+   310→export interface HistoricalRiskContext {
+   311→  /** User's average historical risk score */
+   312→  avgHistoricalScore: number;
+   313→  /** User's maximum historical risk score */
+   314→  maxHistoricalScore: number;
+   315→  /** Number of past transactions analyzed */
+   316→  transactionCount: number;
+   317→  /** Time period of historical data */
+   318→  periodDays: number;
+   319→  /** Trend direction */
+   320→  trend: 'increasing' | 'decreasing' | 'stable';
+   321→}
+   322→
+   323→// ============== Training Data Types ==============
+   324→
+   325→/**
+   326→ * Training dataset configuration
+   327→ */
+   328→export interface TrainingConfig {
+   329→  /** Dataset identifier */
+   330→  datasetId: string;
+   331→  /** Training data source */
+   332→  dataSource: DataSource;
+   333→  /** Data time range */
+   334→  dateRange: {
+   335→    start: Date;
+   336→    end: Date;
+   337→  };
+   338→  /** Training/validation/test split ratios */
+   339→  splitRatios: {
+   340→    training: number;
+   341→    validation: number;
+   342→    test: number;
+   343→  };
+   344→  /** Feature selection configuration */
+   345→  features: FeatureConfig[];
+   346→  /** Target variable configuration */
+   347→  target: TargetConfig;
+   348→  /** Class weights for imbalanced data */
+   349→  classWeights?: Record<string, number>;
+   350→  /** Cross-validation folds */
+   351→  crossValidationFolds?: number;
+   352→  /** Random seed for reproducibility */
+   353→  randomSeed?: number;
+   354→  /** Maximum training iterations */
+   355→  maxIterations?: number;
+   356→  /** Early stopping patience */
+   357→  earlyStoppingPatience?: number;
+   358→  /** Learning rate configuration */
+   359→  learningRate?: number;
+   360→  /** Batch size for mini-batch training */
+   361→  batchSize?: number;
+   362→}
+   363→
+   364→/**
+   365→ * Data source types for training
+   366→ */
+   367→export enum DataSource {
+   368→  /** Production transaction database */
+   369→  TRANSACTION_DB = 'transaction_db',
+   370→  /** Event tracking system */
+   371→  EVENT_STORE = 'event_store',
+   372→  /** External data provider */
+   373→  EXTERNAL_API = 'external_api',
+   374→  /** Preprocessed feature store */
+   375→  FEATURE_STORE = 'feature_store',
+   376→  /** Manual upload */
+   377→  MANUAL_UPLOAD = 'manual_upload',
+   378→  /** Synthetic/generated data */
+   379→  SYNTHETIC = 'synthetic'
+   380→}
+   381→
+   382→/**
+   383→ * Configuration for a single feature
+   384→ */
+   385→export interface FeatureConfig {
+   386→  /** Feature name/identifier */
+   387→  name: string;
+   388→  /** Feature data type */
+   389→  type: FeatureType;
+   390→  /** Whether this feature is used in training */
+   391→  enabled: boolean;
+   392→  /** Feature transformation pipeline */
+   393→  transformations?: TransformationConfig[];
+   394→  /** Missing value handling strategy */
+   395→  missingValueStrategy: MissingValueStrategy;
+   396→  /** Feature-specific normalization config */
+   397→  normalization?: NormalizationConfig;
+   398→}
+   399→
+   400→/**
+   401→ * Supported feature data types
+   402→ */
+   403→export enum FeatureType {
+   404→  NUMERIC = 'numeric',
+   405→  CATEGORICAL = 'categorical',
+   406→  BOOLEAN = 'boolean',
+   407→  TEMPORAL = 'temporal',
+   408→  TEXT = 'text',
+   409→  GEOGRAPHIC = 'geographic',
+   410→  SET = 'set'
+   411→}
+   412→
+   413→/**
+   414→ * Strategies for handling missing values
+   415→ */
+   416→export enum MissingValueStrategy {
+   417→  DROP_ROWS = 'drop_rows',
+   418→  MEAN_IMPUTATION = 'mean_imputation',
+   419→  MEDIAN_IMPUTATION = 'median_imputation',
+   420→  MODE_IMPUTATION = 'mode_imputation',
+   421→  CONSTANT = 'constant',
+   422→  KNN_IMPUTATION = 'knn_imputation',
+   423→  FORWARD_FILL = 'forward_fill',
+   424→  INDICATOR = 'indicator'
+   425→}
+   426→
+   427→/**
+   428→ * Transformation to apply to a feature
+   429→ */
+   430→export interface TransformationConfig {
+   431→  /** Transformation type */
+   432→  type: TransformationType;
+   433→  /** Transformation parameters */
+   434→  params: Record<string, unknown>;
+   435→  /** Order in transformation pipeline */
+   436→  order: number;
+   437→}
+   438→
+   439→/**
+   440→ * Available feature transformations
+   441→ */
+   442→export enum TransformationType {
+   443→  LOG_TRANSFORM = 'log_transform',
+   444→  BOX_COX = 'box_cox',
+   445→  ONE_HOT_ENCODING = 'one_hot_encoding',
+   446→  LABEL_ENCODING = 'label_encoding',
+   447→  BINNING = 'binning',
+   448→  POLYNOMIAL = 'polynomial',
+   449→  INTERACTION = 'interaction',
+   450→  CUSTOM = 'custom'
+   451→}
+   452→
+   453→/**
+   454→ * Normalization configuration
+   455→ */
+   456→export interface NormalizationConfig {
+   457→  /** Normalization method */
+   458→  method: NormalizationMethod;
+   459→  /** Method-specific parameters */
+   460→  params?: Record<string, unknown>;
+   461→}
+   462→
+   463→/**
+   464→ * Normalization methods
+   465→ */
+   466→export enum NormalizationMethod {
+   467→  MIN_MAX = 'min_max',
+   468→  STANDARD = 'standard',
+   469→  ROBUST = 'robust',
+   470→  NONE = 'none'
+   471→}
+   472→
+   473→/**
+   474→ * Target variable configuration
+   475→ */
+   476→export interface TargetConfig {
+   477→  /** Target column name */
+   478→  name: string;
+   479→  /** Target type (classification vs regression) */
+   480→  taskType: TaskType;
+   481→  /** For classification: list of classes */
+   482→  classes?: string[];
+   483→  /** For regression: value range */
+   484→  valueRange?: [number, number];
+   485→}
+   486→
+   487→/**
+   488→ * Machine learning task types
+   489→ */
+   490→export enum TaskType {
+   491→  BINARY_CLASSIFICATION = 'binary_classification',
+   492→  MULTI_CLASS_CLASSIFICATION = 'multi_class_classification',
+   493→  REGRESSION = 'regression',
+   494→  ANOMALY_DETECTION = 'anomaly_detection',
+   495→  CLUSTERING = 'clustering',
+   496→  RANKING = 'ranking'
+   497→}
+   498→
+   499→// ============== Feature Engineering Types ==============
+   500→
+   501→/**
+   502→ * Engineered feature definition
+   503→ */
+   504→export interface EngineeredFeature {
+   505→  /** Feature name */
+   506→  name: string;
+   507→  /** Feature description */
+   508→  description: string;
+   509→  /** Source features used */
+   510→  sourceFeatures: string[];
+   511→  /** Engineering function applied */
+   512→  engineeringFunction: string;
+   513→  /** Feature data type */
+   514→  type: FeatureType;
+   515→  /** Computed value */
+   516→  value: unknown;
+   517→  /** Computation timestamp */
+   518→  computedAt: Date;
+   519→}
+   520→
+   521→/**
+   522→ * Feature vector representation
+   523→ */
+   524→export interface FeatureVector {
+   525→  /** Vector identifier */
+   526→  id: string;
+   527→  /** Feature values as key-value pairs */
+   528→  features: Record<string, unknown>;
+   529→  /** Feature names in order */
+   530→  featureNames: string[];
+   531→  /** Numerical values for model input */
+   532→  numericalValues: number[];
+   533→  /** Original raw data reference */
+   534→  rawDataId?: string;
+   535→  /** Engineering metadata */
+   536→  metadata: FeatureVectorMetadata;
+   537→}
+   538→
+   539→/**
+   540→ * Metadata for a feature vector
+   541→ */
+   542→export interface FeatureVectorMetadata {
+   543→  /** When the vector was created */
+   544→  createdAt: Date;
+   545→  /** Which model/version created it */
+   546→  createdBy: string;
+   547→  /** Number of features */
+   548→  dimension: number;
+   549→  /** Whether vector is normalized */
+   550→  isNormalized: boolean;
+   551→  /** Normalization method if applied */
+   552→  normalizationMethod?: NormalizationMethod;
+   553→  /** Quality score (0-1) */
+   554→  qualityScore: number;
+   555→  /** Any quality issues flagged */
+   556→  issues?: QualityIssue[];
+   557→}
+   558→
+   559→/**
+   560→ * Data quality issue flag
+   561→ */
+   562→export interface QualityIssue {
+   563→  /** Issue type */
+   564→  type: QualityIssueType;
+   565→  /** Affected feature(s) */
+   566→  affectedFeatures: string[];
+   567→  /** Severity level */
+   568→  severity: 'warning' | 'error' | 'critical';
+   569→  /** Description */
+   570→  description: string;
+   571→}
+   572→
+   573→/**
+   574→ * Types of data quality issues
+   575→ */
+   576→export enum QualityIssueType {
+   577→  MISSING_VALUE = 'missing_value',
+   578→  OUT_OF_RANGE = 'out_of_range',
+   579→  INVALID_TYPE = 'invalid_type',
+   580→  DUPLICATE = 'duplicate',
+   581→  INCONSISTENT = 'inconsistent',
+   582→  STALE_DATA = 'stale_data'
+   583→}
+   584→
+   585→// ============== Model Evaluation Types ==============
+   586→
+   587→/**
+   588→ * Comprehensive model evaluation metrics
+   589→ */
+   590→export interface ModelEvaluationMetrics {
+   591→  /** When evaluation was performed */
+   592→  evaluatedAt: Date;
+   593→  /** Dataset used for evaluation */
+   594→  evalDataset: string;
+   595→  /** Classification metrics (if applicable) */
+   596→  classificationMetrics?: ClassificationMetrics;
+   597→  /** Regression metrics (if applicable) */
+   598→  regressionMetrics?: RegressionMetrics;
+   599→  /** Anomaly detection metrics (if applicable) */
+   600→  anomalyMetrics?: AnomalyDetectionMetrics;
+   601→  /** Overall model health score */
+   602→  healthScore: number;
+   603→  /** Recommendations for improvement */
+   604→  recommendations?: string[];
+   605→}
+   606→
+   607→/**
+   608→ * Classification performance metrics
+   609→ */
+   610→export interface ClassificationMetrics {
+   611→  /** Accuracy score */
+   612→  accuracy: number;
+   613→  /** Precision (macro/micro/weighted) */
+   614→  precision: {
+   615→    macro: number;
+   616→    micro: number;
+   617→    weighted: number;
+   618→    perClass: Record<string, number>;
+   619→  };
+   620→  /** Recall scores */
+   621→  recall: {
+   622→    macro: number;
+   623→    micro: number;
+   624→    weighted: number;
+   625→    perClass: Record<string, number>;
+   626→  };
+   627→  /** F1 scores */
+   628→  f1Score: {
+   629→    macro: number;
+   630→    micro: number;
+   631→    weighted: number;
+   632→    perClass: Record<string, number>;
+   633→  };
+   634→  /** Area under ROC curve */
+   635→  aucROC: number;
+   636→  /** Area under PR curve */
+   637→  aucPR: number;
+   638→  /** Confusion matrix */
+   639→  confusionMatrix: number[][];
+   640→  /** Log loss */
+   641→  logLoss: number;
+   642→}
+   643→
+   644→/**
+   645→ * Regression performance metrics
+   646→ */
+   647→export interface RegressionMetrics {
+   648→  /** Mean Absolute Error */
+   649→  mae: number;
+   650→  /** Mean Squared Error */
+   651→  mse: number;
+   652→  /** Root Mean Squared Error */
+   653→  rmse: number;
+   654→  /** R-squared coefficient */
+   655→  rSquared: number;
+   656→  /** Adjusted R-squared */
+   657→  adjustedRSquared: number;
+   658→  /** Mean Absolute Percentage Error */
+   659→  mape: number;
+   660→  /** Symmetric MAPE */
+   661→  smape: number;
+   662→  /** Explained variance */
+   663→  explainedVariance: number;
+   664→  /** Max error */
+   665→  maxError: number;
+   666→  /** Median absolute error */
+   667→  medianAE: number;
+   668→}
+   669→
+   670→/**
+   671→ * Anomaly detection specific metrics
+   672→ */
+   673→export interface AnomalyDetectionMetrics {
+   674→  /** True positive rate at various thresholds */
+   675→  tprAtThresholds: Record<number, number>;
+   676→  /** False positive rate at various thresholds */
+   677→  fprAtThresholds: Record<number, number>;
+   678→  /** Precision-recall at threshold */
+   679→  precisionRecallCurve: Array<{ threshold: number; precision: number; recall: number }>;
+   680→  /** Area under PR curve for anomalies */
+   681→  aucPR: number;
+   682→  /** Detection latency in milliseconds */
+   683→  avgDetectionLatencyMs: number;
+   684→  /** False discovery rate */
+   685→  falseDiscoveryRate: number;
+   686→}
+   687→
+   688→// ============== Pipeline Types ==============
+   689→
+   690→/**
+   691→ * Pipeline execution configuration
+   692→ */
+   693→export interface PipelineConfig {
+   694→  /** Pipeline identifier */
+   695→  id: string;
+   696→  /** Pipeline name */
+   697→  name: string;
+   698→  /** Execution mode */
+   699→  mode: PipelineMode;
+   700→  /** Models to include in pipeline */
+   701→  models: PipelineModelConfig[];
+   702→  /** Result aggregation strategy */
+   703→  aggregation: AggregationConfig;
+   704→  /** Timeout configuration */
+   705→  timeout: {
+   706→    /** Per-model timeout in ms */
+   707→    perModelMs: number;
+   708→    /** Total pipeline timeout in ms */
+   709→    totalMs: number;
+   710→  };
+   711→  /** Retry configuration */
+   712→  retry: RetryConfig;
+   713→  /** Caching configuration */
+   714→  caching: CachingConfig;
+   715→  /** A/B testing configuration */
+   716→  abTesting?: ABTestingConfig;
+   717→  /** Logging level */
+   718→  logLevel: 'debug' | 'info' | 'warn' | 'error';
+   719→}
+   720→
+   721→/**
+   722→ * Pipeline execution modes
+   723→ */
+   724→export enum PipelineMode {
+   725→  /** Execute models sequentially */
+   726→  SEQUENTIAL = 'sequential',
+   727→  /** Execute models in parallel */
+   728→  PARALLEL = 'parallel',
+   729→  /** Execute with dependency graph */
+   730→  DAG = 'dag',
+   731→  /** Execute with fallback chain */
+   732→  FALLBACK_CHAIN = 'fallback_chain'
+   733→}
+   734→
+   735→/**
+   736→ * Configuration for a single model within a pipeline
+   737→ */
+   738→export interface PipelineModelConfig {
+   739→  /** Model ID to use */
+   740→  modelId: string;
+   741→  /** Whether this model is enabled */
+   742→  enabled: boolean;
+   743→  /** Model weight in ensemble (for weighted aggregation) */
+   744→  weight: number;
+   745→  /** Priority for sequential execution */
+   746→  priority: number;
+   747→  /** Dependencies on other models (for DAG mode) */
+   748→  dependencies?: string[];
+   749→  /** Fallback model if this fails */
+   750→  fallbackModelId?: string;
+   751→  /** Model-specific configuration overrides */
+   752→  configOverrides?: Record<string, unknown>;
+   753→}
+   754→
+   755→/**
+   756→ * Result aggregation configuration
+   757→ */
+   758→export interface AggregationConfig {
+   759→  /** Aggregation method */
+   760→  method: AggregationMethod;
+   761→  /** Method-specific parameters */
+   762→  params: Record<string, unknown>;
+   763→}
+   764→
+   765→/**
+   766→ * Aggregation methods for combining model results
+   767→ */
+   768→export enum AggregationMethod {
+   769→  /** Simple majority vote */
+   770→  MAJORITY_VOTE = 'majority_vote',
+   771→  /** Weighted voting */
+   772→  WEIGHTED_VOTE = 'weighted_vote',
+   773→  /** Average of numeric outputs */
+   774→  AVERAGE = 'average',
+   775→  /** Weighted average */
+   776→  WEIGHTED_AVERAGE = 'weighted_average',
+   777→  /** Maximum score */
+   778→  MAX = 'max',
+   779→  /** Minimum score */
+   780→  MIN = 'min',
+   781→  /** Stack-based meta-learner */
+   782→  STACKING = 'stacking',
+   783→  /** Custom aggregation function */
+   784→  CUSTOM = 'custom'
+   785→}
+   786→
+   787→/**
+   788→ * Retry configuration
+   789→ */
+   790→export interface RetryConfig {
+   791→  /** Enable retries */
+   792→  enabled: boolean;
+   793→  /** Maximum retry attempts */
+   794→  maxAttempts: number;
+   795→  /** Initial delay in milliseconds */
+   796→  initialDelayMs: number;
+   797→  /** Backoff multiplier */
+   798→  backoffMultiplier: number;
+   799→  /** Maximum delay in milliseconds */
+   800→  maxDelayMs: number;
+   801→  /** Retryable error codes */
+   802→  retryableErrors: string[];
+   803→}
+   804→
+   805→/**
+   806→ * Caching configuration
+   807→ */
+   808→export interface CachingConfig {
+   809→  /** Enable result caching */
+   810→  enabled: boolean;
+   811→  /** Cache TTL in milliseconds */
+   812→  ttlMs: number;
+   813→  /** Maximum cache size */
+   814→  maxSize: number;
+   815→  /** Cache key generation strategy */
+   816→  keyStrategy: 'hash' | 'signature' | 'custom';
+   817→}
+   818→
+   819→/**
+   820→ * A/B testing configuration for pipelines
+   821→ */
+   822→export interface ABTestingConfig {
+   823→  /** Enable A/B testing */
+   824→  enabled: boolean;
+   825→  /** Test identifier */
+   826→  testId: string;
+   827→  /** Control group configuration (model A) */
+   828→  control: ABTestVariant;
+   829→  /** Treatment group configuration (model B) */
+   830→  treatment: ABTestVariant;
+   831→  /** Traffic split ratio (control:treatment) */
+   832→  trafficSplit: number;
+   833→  /** Minimum sample size for significance */
+   834→  minSampleSize: number;
+   835→  /** Significance level (alpha) */
+   836→  significanceLevel: number;
+   837→  /** Metrics to compare */
+   838→  metrics: string[];
+   839→}
+   840→
+   841→/**
+   842→ * Single variant in A/B test
+   843→ */
+   844→export interface ABTestVariant {
+   845→  /** Variant name/identifier */
+   846→  name: string;
+   847→  /** Models to use in this variant */
+   848→  modelIds: string[];
+   849→  /** Variant-specific configuration */
+   850→  config?: Record<string, unknown>;
+   851→}
+   852→
+   853→/**
+   854→ * Complete pipeline execution result
+   855→ */
+   856→export interface PipelineResult {
+   857→  /** Pipeline execution identifier */
+   858→  executionId: string;
+   859→  /** Pipeline ID */
+   860→  pipelineId: string;
+   861→  /** Timestamp when execution started */
+   862→  startedAt: Date;
+   863→  /** Timestamp when execution completed */
+   864→  completedAt: Date;
+   865→  /** Total execution time in milliseconds */
+   866→  totalDurationMs: number;
+   867→  /** Whether execution was successful */
+   868→  success: boolean;
+   869→  /** Individual model results */
+   870→  modelResults: Map<string, BasePredictionResult>;
+   871→  /** Aggregated final result */
+   872→  aggregatedResult: AggregatedResult;
+   873→  /** A/B testing results if applicable */
+   874→  abTestResults?: ABTestResults;
+   875→  /** Execution metadata */
+   876→  metadata: PipelineExecutionMetadata;
+   877→}
+   878→
+   879→/**
+   880→ * Aggregated result from multiple models
+   881→ */
+   882→export interface AggregatedResult {
+   883→  /** Final prediction/classification */
+   884→  finalPrediction: unknown;
+   885→  /** Overall confidence score */
+   886→  confidence: number;
+   887→  /** Agreement level among models (0-1) */
+   888→  agreement: number;
+   889→  /** Number of models that agreed */
+   890→  agreeingModels: number;
+   891→  /** Total models executed */
+   892→  totalModels: number;
+   893→  /** Disagreement details if any */
+   894→  disagreements?: DisagreementDetail[];
+   895→  /** Aggregation method used */
+   896→  method: AggregationMethod;
+   897→}
+   898→
+   899→/**
+   900→ * Detail about model disagreement
+   901→ */
+   902→export interface DisagreementDetail {
+   903→  /** Model ID that disagreed */
+   904→  modelId: string;
+   905→  /** What this model predicted */
+   906→  prediction: unknown;
+   907→  /** What the majority predicted */
+   908→  majorityPrediction: unknown;
+   909→  /** How far off from consensus */
+   910→  deviationScore: number;
+   911→}
+   912→
+   913→/**
+   914→ * A/B test execution results
+   915→ */
+   916→export interface ABTestResults {
+   917→  /** Test identifier */
+   918→  testId: string;
+   919→  /** Control group results */
+   920→  control: ABTestGroupResult;
+   921→  /** Treatment group results */
+   922→  treatment: ABTestGroupResult;
+   923→  /** Statistical significance */
+   924→  isSignificant: boolean;
+   925→  /** P-value from statistical test */
+   926→  pValue: number;
+   927→  /** Winning variant (if significant) */
+   928→  winningVariant?: 'control' | 'treatment';
+   929→  /** Recommendation based on results */
+   930→  recommendation: string;
+   931→}
+   932→
+   933→/**
+   934→ * Results for one group in A/B test
+   935→ */
+   936→export interface ABTestGroupResult {
+   937→  /** Variant name */
+   938→  variantName: string;
+   939→  /** Sample size */
+   940→  sampleSize: number;
+   941→  /** Metric values */
+   942→  metrics: Record<string, number>;
+   943→  /** Conversion rate if applicable */
+   944→  conversionRate?: number;
+   945→  /** Average value if applicable */
+   946→  avgValue?: number;
+   947→}
+   948→
+   949→/**
+   950→ * Metadata about pipeline execution
+   951→ */
+   952→export interface PipelineExecutionMetadata {
+   953→  /** Input data hash for caching */
+   954→  inputHash: string;
+   955→  /** Models attempted */
+   956→  modelsAttempted: string[];
+   957→  /** Models that succeeded */
+   958→  modelsSucceeded: string[];
+   959→  /** Models that failed */
+   960→  modelsFailed: string[];
+   961→  /** Cache hit status */
+   962→  cacheHit: boolean;
+   963→  /** Retries performed */
+   964→  retriesPerformed: number;
+   965→  /** Execution mode used */
+   966→  mode: PipelineMode;
+   967→  /** Node/environment info */
+   968→  environment: {
+   969→    nodeVersion: string;
+   970→    memoryUsageMb: number;
+   971→    cpuUsage: number;
+   972→  };
+   973→}
+   974→
