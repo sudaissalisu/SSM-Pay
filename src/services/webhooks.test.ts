@@ -59,11 +59,13 @@ function createTestHeaders(
   payload: Record<string, unknown>,
   secret: string = TEST_SECRET
 ): Record<string, string> {
-  const service = new WebhookProcessingService({ defaultSigningSecret: secret });
-  const signature = service.generateSignature(payload, secret);
+  // Use crypto to create HMAC-SHA256 signature
+  const crypto = require('crypto');
+  const payloadStr = JSON.stringify(payload);
+  const signature = crypto.createHmac('sha256', secret).update(payloadStr).digest('hex');
   
   return {
-    'x-ssm-pay-signature': signature,
+    'x-ssm-pay-signature': `v1=${signature}`,
     'content-type': 'application/json',
   };
 }
