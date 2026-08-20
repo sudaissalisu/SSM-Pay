@@ -1,0 +1,2002 @@
+     1→/**
+     2→ * Behavioral Analytics Module for SSM-Pay Payment Platform
+     3→ * Enterprise-grade user behavior analysis system
+     4→ *
+     5→ * @module ml/behavioral-analytics
+     6→ * @description Comprehensive behavioral analytics including user profiling, session analysis,
+     7→ * navigation pattern tracking, conversion funnel analysis, user segmentation,
+     8→ * and behavior-based recommendations.
+     9→ */
+    10→
+    11→import { logger } from '@/lib/logger';
+    12→import { AppError, ErrorCode } from '@/lib/errors';
+    13→
+    14→// ============== Type Definitions ==============
+    15→
+    16→/**
+    17→ * Represents a single user interaction event within the platform
+    18→ */
+    19→export interface BehaviorEvent {
+    20→  /** Unique identifier for the event */
+    21→  id: string;
+    22→  /** User identifier (hashed/anonymized) */
+    23→  userId: string;
+    24→  /** Session identifier */
+    25→  sessionId: string;
+    26→  /** Event type classification */
+    27→  eventType: EventType;
+    28→  /** Page or screen where event occurred */
+    29→  page: string;
+    30→  /** Specific element or component interacted with */
+    31→  element?: string;
+    32→  /** Timestamp of when the event occurred */
+    33→  timestamp: Date;
+    34→  /** Additional metadata about the event */
+    35→  metadata: Record<string, unknown>;
+    36→  /** Device information at time of event */
+    37→  deviceInfo: DeviceInfo;
+    38→  /** Geographic location data */
+    39→  geoLocation?: GeoLocation;
+    40→}
+    41→
+    42→/**
+    43→ * Classification of event types tracked by the system
+    44→ */
+    45→export type EventType =
+    46→  | 'page_view'
+    47→  | 'click'
+    48→  | 'scroll'
+    49→  | 'form_submit'
+    50→  | 'form_start'
+    51→  | 'form_abandon'
+    52→  | 'payment_init'
+    53→  | 'payment_complete'
+    54→  | 'payment_failed'
+    55→  | 'navigation'
+    56→  | 'search'
+    57→  | 'filter_apply'
+    58→  | 'item_select'
+    59→  | 'logout'
+    60→  | 'login'
+    61→  | 'signup'
+    62→  | 'error'
+    63→  | 'api_call'
+    64→  | 'download'
+    65→  | 'share'
+    66→  | 'bookmark'
+    67→  | 'feedback_submit';
+    68→
+    69→/**
+    70→ * Device information captured with each event
+    71→ */
+    72→export interface DeviceInfo {
+    73→  /** Unique device fingerprint */
+    74→  deviceId: string;
+    75→  /** Device type category */
+    76→  deviceType: 'desktop' | 'mobile' | 'tablet' | 'smart_tv' | 'other';
+    77→  /** Operating system name */
+    78→  os: string;
+    79→  /** Browser or application name */
+    80→  browser: string;
+    81→  /** Screen resolution width */
+    82→  screenWidth: number;
+    83→  /** Screen resolution height */
+    84→  screenHeight: number;
+    85→  /** User agent string (truncated) */
+    86→  userAgent: string;
+    87→}
+    88→
+    89→/**
+    90→ * Geographic location derived from IP geolocation
+    91→ */
+    92→export interface GeoLocation {
+    93→  /** ISO 3166-1 alpha-2 country code */
+    94→  countryCode: string;
+    95→  /** Country name */
+    96→  countryName: string;
+    97→  /** Region/state code */
+    98→  regionCode?: string;
+    99→  /** City name */
+   100→  city?: string;
+   101→  /** Latitude coordinate */
+   102→  latitude?: number;
+   103→  /** Longitude coordinate */
+   104→  longitude?: number;
+   105→}
+   106→
+   107→/**
+   108→ * Aggregated session data representing a complete user session
+   109→ */
+   110→export interface SessionData {
+   111→  /** Session identifier */
+   112→  sessionId: string;
+   113→  /** Associated user identifier */
+   114→  userId: string;
+   115→  /** Session start timestamp */
+   116→  startTime: Date;
+   117→  /** Session end timestamp (null if active) */
+   118→  endTime: Date | null;
+   119→  /** Total duration in seconds */
+   120→  durationSeconds: number;
+   121→  /** All events in this session */
+   122→  events: BehaviorEvent[];
+   123→  /** Pages visited during session */
+   124→  pagesVisited: string[];
+   125→  /** Entry page of the session */
+   126→  entryPage: string;
+   127→  /** Exit page of the session (null if active) */
+   128→  exitPage: string | null;
+   129→  /** Number of page views in session */
+   130→  pageViewCount: number;
+   131→  /** Number of interactions (clicks, forms, etc.) */
+   132→  interactionCount: number;
+   133→  /** Whether session resulted in conversion */
+   134→  converted: boolean;
+   135→  /** Conversion type if applicable */
+   136→  conversionType?: ConversionType;
+   137→  /** Device used during session */
+   138→  deviceInfo: DeviceInfo;
+   139→  /** Bounce flag - only one page viewed */
+   140→  isBounce: boolean;
+   141→}
+   142→
+   143→/**
+   144→ * Types of conversions tracked in the platform
+   145→ */
+   146→export type ConversionType =
+   147→  | 'payment_completed'
+   148→  | 'account_created'
+   149→  | 'zainbox_created'
+   150→  | 'kyc_submitted'
+   151→  | 'referral_sent'
+   152→  | 'feature_adopted';
+   153→
+   154→/**
+   155→ * Comprehensive user behavior profile
+   156→ */
+   157→export interface UserProfile {
+   158→  /** User identifier */
+   159→  userId: string;
+   160→  /** Profile creation date */
+   161→  createdAt: Date;
+   162→  /** Last activity timestamp */
+   163→  lastActiveAt: Date;
+   164→  /** Total sessions count */
+   165→  totalSessions: number;
+   166→  /** Total events tracked */
+   167→  totalEvents: number;
+   168→  /** Average session duration in seconds */
+   169→  avgSessionDuration: number;
+   170→  /** Most frequently visited pages */
+   171→  topPages: PageFrequency[];
+   172→  /** User's preferred device types */
+   173→  devicePreferences: DevicePreference[];
+   174→  /** Activity by hour of day (0-23) */
+   175→  hourlyActivity: number[];
+   176→  /** Activity by day of week (0=Sunday, 6=Saturday) */
+   177→  weeklyActivity: number[];
+   178→  /** Behavioral scores */
+   179→  behaviorScores: BehaviorScores;
+   180→  /** User segment assignment */
+   181→  segment: UserSegment;
+   182→  /** Engagement level classification */
+   183→  engagementLevel: EngagementLevel;
+   184→  /** Risk assessment score (0-100) */
+   185→  riskScore: number;
+   186→  /** Predicted churn probability (0-1) */
+   187→  churnProbability: number;
+   188→  /** Lifetime value prediction */
+   189→  predictedLTV: number;
+   190→  /** Feature adoption map */
+   191→  featureAdoption: Record<string, AdoptionStatus>;
+   192→  /** Navigation patterns identified */
+   193→  navigationPatterns: NavigationPattern[];
+   194→  /** Conversion history */
+   195→  conversionHistory: ConversionRecord[];
+   196→}
+   197→
+   198→/**
+   199→ * Page visit frequency record
+   200→ */
+   201→export interface PageFrequency {
+   202→  /** Page path */
+   203→  page: string;
+   204→  /** Visit count */
+   205→  count: number;
+   206→  /** Percentage of total visits */
+   207→  percentage: number;
+   208→}
+   209→
+   210→/**
+   211→ * Device usage preference
+   212→ */
+   213→export interface DevicePreference {
+   214→  /** Device type */
+   215→  deviceType: DeviceInfo['deviceType'];
+   216→  /** Usage count */
+   217→  count: number;
+   218→  /** Percentage of total sessions */
+   219→  percentage: number;
+   220→}
+   221→
+   222→/**
+   223→ * Composite behavioral scoring metrics
+   224→ */
+   225→export interface BehaviorScores {
+   226→  /** Overall engagement score (0-100) */
+   227→  engagementScore: number;
+   228→  /** Navigation consistency score (0-100) */
+   229→  consistencyScore: number;
+   230→  /** Conversion propensity score (0-100) */
+   231→  conversionPropensity: number;
+   232→  /** Feature exploration score (0-100) */
+   233→  explorationScore: number;
+   234→  /** Loyalty indicator score (0-100) */
+   235→  loyaltyScore: number;
+   236→  /** Trustworthiness score based on behavior patterns (0-100) */
+   237→  trustScore: number;
+   238→}
+   239→
+   240→/**
+   241→ * User segmentation categories
+   242→ */
+   243→export type UserSegment =
+   244→  | 'new_user'
+   245→  | 'active_user'
+   246→  | 'power_user'
+   247→  | 'at_risk_user'
+   248→  | 'churned_user'
+   249→  | 'premium_user'
+   250→  | 'casual_user'
+   251→  | 'business_user';
+   252→
+   253→/**
+   254→ * User engagement level classification
+   255→ */
+   256→export type EngagementLevel = 'low' | 'medium' | 'high' | 'very_high';
+   257→
+   258→/**
+   259→ * Feature adoption status tracking
+   260→ */
+   261→export type AdoptionStatus = 'not_adopted' | 'aware' | 'trialing' | 'adopted' | 'power_user';
+   262→
+   263→/**
+   264→ * Identified navigation pattern
+   265→ */
+   266→export interface NavigationPattern {
+   267→  /** Pattern identifier */
+   268→  id: string;
+   269→  /** Human-readable pattern name */
+   270→  name: string;
+   271→  /** Sequence of pages in pattern */
+   272→  pageSequence: string[];
+   273→  /** Frequency of this pattern occurrence */
+   274→  frequency: number;
+   275→  /** Average time to complete pattern (seconds) */
+   276→  avgDuration: number;
+   277→  /** Conversion rate for users following this pattern */
+   278→  conversionRate: number;
+   279→  /** Confidence score for pattern detection (0-1) */
+   280→  confidence: number;
+   281→}
+   282→
+   283→/**
+   284→ * Individual conversion record
+   285→ */
+   286→export interface ConversionRecord {
+   287→  /** Conversion type */
+   288→  type: ConversionType;
+   289→  /** Timestamp of conversion */
+   290→  timestamp: Date;
+   291→  /** Session where conversion occurred */
+   292→  sessionId: string;
+   293→  /** Time to convert from session start (seconds) */
+   294→  timeToConvert: number;
+   295→  /** Funnel steps completed before conversion */
+   296→  funnelStepsCompleted: string[];
+   297→}
+   298→
+   299→/**
+   300→ * Conversion funnel definition and analysis
+   301→ */
+   302→export interface ConversionFunnel {
+   303→  /** Unique funnel identifier */
+   304→  id: string;
+   305→  /** Descriptive name for the funnel */
+   306→  name: string;
+   307→  /** Ordered list of funnel steps */
+   308→  steps: FunnelStep[];
+   309→  /** Analysis results */
+   310→  analysis: FunnelAnalysis;
+   311→}
+   312→
+   313→/**
+   314→ * Individual step in a conversion funnel
+   315→ */
+   316→export interface FunnelStep {
+   317→  /** Step identifier */
+   318→  id: string;
+   319→  /** Step name */
+   320→  name: string;
+   321→  /** Page or action that defines this step */
+   322→  pageOrAction: string;
+   323→  /** Expected event type for this step */
+   324→  expectedEventType: EventType;
+   325→  /** Optional condition function description */
+   326→  condition?: string;
+   327→}
+   328→
+   329→/**
+   330→ * Computed funnel analysis results
+   331→ */
+   332→export interface FunnelAnalysis {
+   333→  /** Total users who entered the funnel */
+   334→  totalEntries: number;
+   335→  /** Users at each step */
+   336→  stepCounts: number[];
+   337→  /** Conversion rates between consecutive steps */
+   338→  stepConversionRates: number[];
+   339→  /** Overall funnel conversion rate */
+   340→  overallConversionRate: number;
+   341→  /** Average drop-off points */
+   342→  dropOffPoints: DropOffPoint[];
+   343→  /** Average time spent at each step (seconds) */
+   344→  avgTimePerStep: number[];
+   345→  /** Analysis period start */
+   346→  periodStart: Date;
+   347→  /** Analysis period end */
+   348→  periodEnd: Date;
+   349→}
+   350→
+   351→/**
+   352→ * Point where users drop off from funnel
+   353→ */
+   354→export interface DropOffPoint {
+   355→  /** Step index where drop-off occurs */
+   356→  stepIndex: number;
+   357→  /** Step name */
+   358→  stepName: string;
+   359→  /** Number of users who dropped off */
+   360→  droppedUsers: number;
+   361→  /** Drop-off rate as percentage */
+   362→  dropOffRate: number;
+   363→  /** Common reasons for drop-off (inferred) */
+   364→  reasons: string[];
+   365→}
+   366→
+   367→/**
+   368→ * Recommendation generated by the analytics engine
+   369→ */
+   370→export interface BehaviorRecommendation {
+   371→  /** Recommendation identifier */
+   372→  id: string;
+   373→  /** Target user segment or specific user */
+   374→  targetUserId?: string;
+   375→  /** Target segment */
+   376→  targetSegment?: UserSegment;
+   377→  /** Recommendation category */
+   378→  category: RecommendationCategory;
+   379→  /** Priority level */
+   380→  priority: 'low' | 'medium' | 'high' | 'critical';
+   381→  /** Recommendation title */
+   382→  title: string;
+   383→  /** Detailed recommendation description */
+   384→  description: string;
+   385→  /** Actionable items to implement */
+   386→  actions: RecommendationAction[];
+   387→  /** Expected impact if implemented */
+   388→  expectedImpact: ImpactEstimate;
+   389→  /** Confidence in recommendation (0-1) */
+   390→  confidence: number;
+   391→  /** When recommendation was generated */
+   392→  generatedAt: Date;
+   393→  /** Expiration timestamp */
+   394→  expiresAt: Date;
+   395→}
+   396→
+   397→/**
+   398→ * Categories of recommendations
+   399→ */
+   400→export type RecommendationCategory =
+   401→  | 'engagement'
+   402→  | 'retention'
+   403→  | 'conversion'
+   404→  | 'upsell'
+   405→  | 'onboarding'
+   406→  | 'win_back'
+   407→  | 'feature_adoption'
+   408→  | 'risk_mitigation';
+   409→
+   410→/**
+   411→ * Actionable item within a recommendation
+   412→ */
+   413→export interface RecommendationAction {
+   414→  /** Action identifier */
+   415→  id: string;
+   416→  /** Action description */
+   417→  description: string;
+   418→  /** Channel to deliver action */
+   419→  channel: 'in_app' | 'email' | 'push' | 'sms' | 'banner';
+   420→  /** Estimated effort to implement */
+   421→  effort: 'low' | 'medium' | 'high';
+   422→  /** Expected timeframe for results */
+   423→  timeframe: string;
+   424→}
+   425→
+   426→/**
+   427→ * Estimated impact of implementing a recommendation
+   428→ */
+   429→export interface ImpactEstimate {
+   430→  /** Metric being impacted */
+   431→  metric: string;
+   432→  /** Expected change (positive or negative percentage) */
+   433→  expectedChange: number;
+   434→  /** Confidence interval lower bound */
+   435→  confidenceLow: number;
+   436→  /** Confidence interval upper bound */
+   437→  confidenceHigh: number;
+   438→  /** Timeframe for impact realization */
+   439→  timeframe: string;
+   440→}
+   441→
+   442→/**
+   443→ * Configuration options for the behavioral analytics engine
+   444→ */
+   445→export interface AnalyticsConfig {
+   446→  /** Minimum session duration to consider valid (seconds) */
+   447→  minSessionDuration: number;
+   448→  /** Maximum session timeout (seconds of inactivity) */
+   449→  sessionTimeout: number;
+   450→  /** Minimum events required for profile creation */
+   451→  minEventsForProfile: number;
+   452→  /** Lookback window for computing profiles (days) */
+   453→  profileLookbackDays: number;
+   454→  /** Weights for engagement score calculation */
+   455→  engagementWeights: EngagementWeights;
+   456→  /** Thresholds for segmentation */
+   457→  segmentationThresholds: SegmentationThresholds;
+   458→  /** Enable predictive features */
+   459→  enablePredictions: boolean;
+   460→  /** Cache TTL for computed profiles (minutes) */
+   461→  cacheTTLMinutes: number;
+   462→}
+   463→
+   464→/** Weights for calculating engagement score */
+   465→export interface EngagementWeights {
+   466→  /** Weight for page view events */
+   467→  pageViewWeight: number;
+   468→  /** Weight for click events */
+   469→  clickWeight: number;
+   470→  /** Weight for form interactions */
+   471→  formWeight: number;
+   472→  /** Weight for payment events */
+   473→  paymentWeight: number;
+   474→  /** Weight for navigation events */
+   475→  navigationWeight: number;
+   476→  /** Weight for search events */
+   477→  searchWeight: number;
+   478→  /** Weight for feature adoption events */
+   479→  featureAdoptionWeight: number;
+   480→}
+   481→
+   482→/** Thresholds for user segmentation decisions */
+   483→export interface SegmentationThresholds {
+   484→  /** Sessions per month for power user classification */
+   485→  powerUserThreshold: number;
+   486→  /** Days inactive for at-risk classification */
+   487→  atRiskDaysInactive: number;
+   488→  /** Days inactive for churned classification */
+   489→  churnedDaysInactive: number;
+   490→  /** Minimum engagement score for high engagement */
+   491→  highEngagementScore: number;
+   492→  /** Minimum transactions for business user */
+   493→  businessUserMinTransactions: number;
+   494→}
+   495→
+   496→// ============== Default Configuration ==============
+   497→
+   498→const DEFAULT_CONFIG: AnalyticsConfig = {
+   499→  minSessionDuration: 5,
+   500→  sessionTimeout: 1800, // 30 minutes
+   501→  minEventsForProfile: 10,
+   502→  profileLookbackDays: 90,
+   503→  engagementWeights: {
+   504→    pageViewWeight: 1.0,
+   505→    clickWeight: 1.5,
+   506→    formWeight: 2.0,
+   507→    paymentWeight: 3.0,
+   508→    navigationWeight: 1.2,
+   509→    searchWeight: 1.8,
+   510→    featureAdoptionWeight: 2.5,
+   511→  },
+   512→  segmentationThresholds: {
+   513→    powerUserThreshold: 20,
+   514→    atRiskDaysInactive: 14,
+   515→    churnedDaysInactive: 30,
+   516→    highEngagementScore: 70,
+   517→    businessUserMinTransactions: 50,
+   518→  },
+   519→  enablePredictions: true,
+   520→  cacheTTLMinutes: 60,
+   521→};
+   522→
+   523→// ============== Main Analytics Class ==============
+   524→
+   525→/**
+   526→ * BehavioralAnalyticsEngine - Core class for analyzing user behavior patterns
+   527→ *
+   528→ * @example
+   529→ * ```typescript
+   530→ * const engine = new BehavioralAnalyticsEngine();
+   531→ * await engine.initialize();
+   532→ *
+   533→ * // Track an event
+   534→ * await engine.trackEvent({
+   535→ *   id: 'evt_123',
+   536→ *   userId: 'user_456',
+   537→ *   sessionId: 'sess_789',
+   538→ *   eventType: 'page_view',
+   539→ *   page: '/dashboard',
+   540→ *   timestamp: new Date(),
+   541→ *   metadata: {},
+   542→ *   deviceInfo: { ... }
+   543→ * });
+   544→ *
+   545→ * // Get user profile
+   546→ * const profile = await engine.getUserProfile('user_456');
+   547→ * ```
+   548→ */
+   549→export class BehavioralAnalyticsEngine {
+   550→  private config: AnalyticsConfig;
+   551→  private eventStore: Map<string, BehaviorEvent[]>;
+   552→  private sessionStore: Map<string, SessionData>;
+   553→  private profileCache: Map<string, { profile: UserProfile; cachedAt: Date }>;
+   554→  private initialized: boolean;
+   555→
+   556→  constructor(config: Partial<AnalyticsConfig> = {}) {
+   557→    this.config = { ...DEFAULT_CONFIG, ...config };
+   558→    this.eventStore = new Map();
+   559→    this.sessionStore = new Map();
+   560→    this.profileCache = new Map();
+   561→    this.initialized = false;
+   562→
+   563→    logger.info('BehavioralAnalyticsEngine instance created', {
+   564→      event: 'behavioral_analytics.init',
+   565→      metadata: { config: this.config },
+   566→    });
+   567→  }
+   568→
+   569→  /**
+   570→   * Initialize the analytics engine
+   571→   * Sets up internal stores and validates configuration
+   572→   */
+   573→  async initialize(): Promise<void> {
+   574→    try {
+   575→      // Validate configuration
+   576→      this.validateConfig();
+   577→
+   578→      // Initialize stores
+   579→      this.eventStore = new Map();
+   580→      this.sessionStore = new Map();
+   581→      this.profileCache = new Map();
+   582→
+   583→      this.initialized = true;
+   584→
+   585→      logger.info('BehavioralAnalyticsEngine initialized successfully', {
+   586→        event: 'behavioral_analytics.ready',
+   587→        metadata: { config: this.config },
+   588→      });
+   589→    } catch (error) {
+   590→      const appError = error instanceof AppError ? error : new AppError(
+   591→        'Failed to initialize BehavioralAnalyticsEngine',
+   592→        ErrorCode.UNKNOWN_ERROR,
+   593→        { cause: error instanceof Error ? error : undefined }
+   594→      );
+   595→      logger.error('BehavioralAnalyticsEngine initialization failed', {
+   596→        event: 'behavioral_analytics.init_error',
+   597→        error: appError,
+   598→      });
+   599→      throw appError;
+   600→    }
+   601→  }
+   602→
+   603→  /**
+   604→   * Validate engine configuration
+   605→   * @throws AppError if configuration is invalid
+   606→   */
+   607→  private validateConfig(): void {
+   608→    const { engagementWeights, segmentationThresholds } = this.config;
+   609→
+   610→    // Validate engagement weights sum to reasonable range
+   611→    const weightSum = Object.values(engagementWeights).reduce((a, b) => a + b, 0);
+   612→    if (weightSum <= 0 || weightSum > 20) {
+   613→      throw new AppError(
+   614→        'Invalid engagement weights configuration',
+   615→        ErrorCode.INVALID_CONFIG,
+   616→        { context: { weightSum } }
+   617→      );
+   618→    }
+   619→
+   620→    // Validate segmentation thresholds are logical
+   621→    if (segmentationThresholds.atRiskDaysInactive >= segmentationThresholds.churnedDaysInactive) {
+   622→      throw new AppError(
+   623→        'At-risk threshold must be less than churned threshold',
+   624→        ErrorCode.INVALID_CONFIG,
+   625→        { context: segmentationThresholds }
+   626→      );
+   627→    }
+   628→  }
+   629→
+   630→  /**
+   631→   * Track a new behavior event
+   632→   * @param event - The behavior event to track
+   633→   * @throws AppError if engine not initialized or event invalid
+   634→   */
+   635→  async trackEvent(event: BehaviorEvent): Promise<void> {
+   636→    this.ensureInitialized();
+   637→    this.validateEvent(event);
+   638→
+   639→    try {
+   640→      // Store event by user
+   641→      const userEvents = this.eventStore.get(event.userId) || [];
+   642→      userEvents.push(event);
+   643→      this.eventStore.set(event.userId, userEvents);
+   644→
+   645→      // Update or create session
+   646→      this.updateSession(event);
+   647→
+   648→      // Invalidate profile cache for this user
+   649→      this.profileCache.delete(event.userId);
+   650→
+   651→      logger.debug('Event tracked successfully', {
+   652→        event: 'behavioral_analytics.event_tracked',
+   653→        metadata: {
+   654→          eventId: event.id,
+   655→          userId: event.userId,
+   656→          eventType: event.eventType,
+   657→          page: event.page,
+   658→        },
+   659→      });
+   660→    } catch (error) {
+   661→      const appError = error instanceof AppError ? error : new AppError(
+   662→        'Failed to track event',
+   663→        ErrorCode.UNKNOWN_ERROR,
+   664→        { cause: error instanceof Error ? error : undefined }
+   665→      );
+   666→      logger.error('Event tracking failed', {
+   667→        event: 'behavioral_analytics.track_error',
+   668→        error: appError,
+   669→        metadata: { eventId: event.id },
+   670→      });
+   671→      throw appError;
+   672→    }
+   673→  }
+   674→
+   675→  /**
+   676→   * Track multiple events in batch
+   677→   * @param events - Array of behavior events to track
+   678→   */
+   679→  async trackEventsBatch(events: BehaviorEvent[]): Promise<void> {
+   680→    this.ensureInitialized();
+   681→
+   682→    if (!events.length) {
+   683→      return;
+   684→    }
+   685→
+   686→    for (const event of events) {
+   687→      await this.trackEvent(event);
+   688→    }
+   689→
+   690→    logger.info(`Batch tracking completed: ${events.length} events`, {
+   691→      event: 'behavioral_analytics.batch_tracked',
+   692→      metadata: { eventCount: events.length },
+   693→    });
+   694→  }
+   695→
+   696→  /**
+   697→   * Validate event structure and required fields
+   698→   * @param event - Event to validate
+   699→   * @throws AppError if validation fails
+   700→   */
+   701→  private validateEvent(event: BehaviorEvent): void {
+   702→    if (!event.id || typeof event.id !== 'string') {
+   703→      throw new AppError('Event ID is required and must be a string', ErrorCode.VALIDATION_ERROR);
+   704→    }
+   705→    if (!event.userId || typeof event.userId !== 'string') {
+   706→      throw new AppError('User ID is required and must be a string', ErrorCode.VALIDATION_ERROR);
+   707→    }
+   708→    if (!event.sessionId || typeof event.sessionId !== 'string') {
+   709→      throw new AppError('Session ID is required and must be a string', ErrorCode.VALIDATION_ERROR);
+   710→    }
+   711→    if (!event.eventType || !this.isValidEventType(event.eventType)) {
+   712→      throw new AppError(`Invalid event type: ${event.eventType}`, ErrorCode.VALIDATION_ERROR);
+   713→    }
+   714→    if (!event.page || typeof event.page !== 'string') {
+   715→      throw new AppError('Page is required and must be a string', ErrorCode.VALIDATION_ERROR);
+   716→    }
+   717→    if (!(event.timestamp instanceof Date) || isNaN(event.timestamp.getTime())) {
+   718→      throw new AppError('Timestamp must be a valid Date object', ErrorCode.VALIDATION_ERROR);
+   719→    }
+   720→    if (!event.deviceInfo || !event.deviceInfo.deviceId) {
+   721→      throw new AppError('Device info with device ID is required', ErrorCode.VALIDATION_ERROR);
+   722→    }
+   723→  }
+   724→
+   725→  /**
+   726→   * Check if event type is valid
+   727→   * @param type - Event type to check
+   728→   */
+   729→  private isValidEventType(type: string): type is EventType {
+   730→    const validTypes: EventType[] = [
+   731→      'page_view', 'click', 'scroll', 'form_submit', 'form_start', 'form_abandon',
+   732→      'payment_init', 'payment_complete', 'payment_failed', 'navigation', 'search',
+   733→      'filter_apply', 'item_select', 'logout', 'login', 'signup', 'error', 'api_call',
+   734→      'download', 'share', 'bookmark', 'feedback_submit',
+   735→    ];
+   736→    return validTypes.includes(type as EventType);
+   737→  }
+   738→
+   739→  /**
+   740→   * Update session data with new event
+   741→   * @param event - New event to incorporate into session
+   742→   */
+   743→  private updateSession(event: BehaviorEvent): void {
+   744→    let session = this.sessionStore.get(event.sessionId);
+   745→
+   746→    if (!session) {
+   747→      // Create new session
+   748→      session = this.createSession(event);
+   749→      this.sessionStore.set(event.sessionId, session);
+   750→    } else {
+   751→      // Update existing session
+   752→      session.events.push(event);
+   753→      
+   754→      if (!session.pagesVisited.includes(event.page)) {
+   755→        session.pagesVisited.push(event.page);
+   756→      }
+   757→
+   758→      // Count interactions (non-page_view events)
+   759→      if (event.eventType !== 'page_view') {
+   760→        session.interactionCount++;
+   761→      } else {
+   762→        session.pageViewCount++;
+   763→      }
+   764→
+   765→      // Check for conversion events
+   766→      if (this.isConversionEvent(event.eventType)) {
+   767→        session.converted = true;
+   768→        session.conversionType = this.getConversionType(event.eventType);
+   769→      }
+   770→
+   771→      // Update end time
+   772→      session.endTime = event.timestamp;
+   773→      session.durationSeconds = Math.floor(
+   774→        (event.timestamp.getTime() - session.startTime.getTime()) / 1000
+   775→      );
+   776→
+   777→      // Update bounce status
+   778→      session.isBounce = session.pageViewCount <= 1 && session.interactionCount === 0;
+   779→
+   780→      // Update exit page
+   781→      session.exitPage = event.page;
+   782→    }
+   783→  }
+   784→
+   785→  /**
+   786→   * Create a new session from the first event
+   787→   * @param event - First event of the session
+   788→   * @returns New session data
+   789→   */
+   790→  private createSession(event: BehaviorEvent): SessionData {
+   791→    return {
+   792→      sessionId: event.sessionId,
+   793→      userId: event.userId,
+   794→      startTime: event.timestamp,
+   795→      endTime: event.timestamp,
+   796→      durationSeconds: 0,
+   797→      events: [event],
+   798→      pagesVisited: [event.page],
+   799→      entryPage: event.page,
+   800→      exitPage: event.page,
+   801→      pageViewCount: event.eventType === 'page_view' ? 1 : 0,
+   802→      interactionCount: event.eventType !== 'page_view' ? 1 : 0,
+   803→      converted: this.isConversionEvent(event.eventType),
+   804→      conversionType: this.isConversionEvent(event.eventType)
+   805→        ? this.getConversionType(event.eventType)
+   806→        : undefined,
+   807→      deviceInfo: event.deviceInfo,
+   808→      isBounce: true,
+   809→    };
+   810→  }
+   811→
+   812→  /**
+   813→   * Check if event type represents a conversion
+   814→   * @param eventType - Event type to check
+   815→   */
+   816→  private isConversionEvent(eventType: EventType): boolean {
+   817→    const conversionEvents: EventType[] = [
+   818→      'payment_complete', 'signup', 'payment_init', 'feedback_submit',
+   819→    ];
+   820→    return conversionEvents.includes(eventType);
+   821→  }
+   822→
+   823→  /**
+   824→   * Map event type to conversion type
+   825→   * @param eventType - Conversion event type
+   826→   */
+   827→  private getConversionType(eventType: EventType): ConversionType {
+   828→    const mapping: Partial<Record<EventType, ConversionType>> = {
+   829→      payment_complete: 'payment_completed',
+   830→      signup: 'account_created',
+   831→      payment_init: 'payment_completed',
+   832→      feedback_submit: 'feature_adopted',
+   833→    };
+   834→    return mapping[eventType] || 'feature_adopted';
+   835→  }
+   836→
+   837→  /**
+   838→   * Get comprehensive user behavior profile
+   839→   * @param userId - User identifier
+   840→   * @returns Complete user behavior profile
+   841→   * @throws AppError if user not found or insufficient data
+   842→   */
+   843→  async getUserProfile(userId: string): Promise<UserProfile> {
+   844→    this.ensureInitialized();
+   845→
+   846→    // Check cache first
+   847→    const cached = this.profileCache.get(userId);
+   848→    if (cached && this.isCacheValid(cached.cachedAt)) {
+   849→      return cached.profile;
+   850→    }
+   851→
+   852→    const events = this.eventStore.get(userId);
+   853→    
+   854→    if (!events || events.length < this.config.minEventsForProfile) {
+   855→      throw new AppError(
+   856→        `Insufficient data for user profile. Required: ${this.config.minEventsForProfile} events`,
+   857→        ErrorCode.VALIDATION_ERROR,
+   858→        { context: { userId, eventCount: events?.length || 0 } }
+   859→      );
+   860→    }
+   861→
+   862→    try {
+   863→      const profile = this.buildUserProfile(userId, events);
+   864→      
+   865→      // Cache the profile
+   866→      this.profileCache.set(userId, { profile, cachedAt: new Date() });
+   867→
+   868→      logger.debug('User profile generated', {
+   869→        event: 'behavioral_analytics.profile_generated',
+   870→        metadata: { userId, segment: profile.segment, engagementLevel: profile.engagementLevel },
+   871→      });
+   872→
+   873→      return profile;
+   874→    } catch (error) {
+   875→      const appError = error instanceof AppError ? error : new AppError(
+   876→        'Failed to generate user profile',
+   877→        ErrorCode.UNKNOWN_ERROR,
+   878→        { cause: error instanceof Error ? error : undefined }
+   879→      );
+   880→      logger.error('Profile generation failed', {
+   881→        event: 'behavioral_analytics.profile_error',
+   882→        error: appError,
+   883→        metadata: { userId },
+   884→      });
+   885→      throw appError;
+   886→    }
+   887→  }
+   888→
+   889→  /**
+   890→   * Check if cached profile is still valid
+   891→   * @param cachedAt - Timestamp when profile was cached
+   892→   */
+   893→  private isCacheValid(cachedAt: Date): boolean {
+   894→    const elapsedMinutes = (Date.now() - cachedAt.getTime()) / (1000 * 60);
+   895→    return elapsedMinutes < this.config.cacheTTLMinutes;
+   896→  }
+   897→
+   898→  /**
+   899→   * Build comprehensive user profile from events
+   900→   * @param userId - User identifier
+   901→   * @param events - All user events
+   902→   * @returns Complete user profile
+   903→   */
+   904→  private buildUserProfile(userId: string, events: BehaviorEvent[]): UserProfile {
+   905→    const sortedEvents = [...events].sort((a, b) => 
+   906→      a.timestamp.getTime() - b.timestamp.getTime()
+   907→    );
+   908→
+   909→    // Calculate basic metrics
+   910→    const totalEvents = sortedEvents.length;
+   911→    const userSessions = this.aggregateUserSessions(userId);
+   912→    const totalSessions = userSessions.length;
+   913→    
+   914→    // Calculate average session duration (excluding bounces and very short sessions)
+   915→    const validSessions = userSessions.filter(
+   916→      s => s.durationSeconds >= this.config.minSessionDuration
+   917→    );
+   918→    const avgSessionDuration = validSessions.length > 0
+   919→      ? validSessions.reduce((sum, s) => sum + s.durationSeconds, 0) / validSessions.length
+   920→      : 0;
+   921→
+   922→    // Calculate page frequencies
+   923→    const topPages = this.calculatePageFrequencies(sortedEvents);
+   924→
+   925→    // Calculate device preferences
+   926→    const devicePreferences = this.calculateDevicePreferences(userSessions);
+   927→
+   928→    // Calculate temporal activity patterns
+   929→    const hourlyActivity = this.calculateHourlyActivity(sortedEvents);
+   930→    const weeklyActivity = this.calculateWeeklyActivity(sortedEvents);
+   931→
+   932→    // Calculate behavioral scores
+   933→    const behaviorScores = this.calculateBehaviorScores(sortedEvents, userSessions);
+   934→
+   935→    // Determine user segment
+   936→    const segment = this.determineUserSegment(sortedEvents, userSessions, behaviorScores);
+   937→
+   938→    // Determine engagement level
+   939→    const engagementLevel = this.determineEngagementLevel(behaviorScores.engagementScore);
+   940→
+   941→    // Calculate risk score
+   942→    const riskScore = this.calculateRiskScore(sortedEvents, behaviorScores);
+   943→
+   944→    // Calculate churn probability
+   945→    const churnProbability = this.calculateChurnProbability(
+   946→      sortedEvents, behaviorScores, userSessions
+   947→    );
+   948→
+   949→    // Calculate predicted LTV
+   950→    const predictedLTV = this.predictLifetimeValue(userSessions, behaviorScores);
+   951→
+   952→    // Analyze feature adoption
+   953→    const featureAdoption = this.analyzeFeatureAdoption(sortedEvents);
+   954→
+   955→    // Identify navigation patterns
+   956→    const navigationPatterns = this.identifyNavigationPatterns(userSessions);
+   957→
+   958→    // Extract conversion history
+   959→    const conversionHistory = this.extractConversionHistory(userSessions);
+   960→
+   961→    return {
+   962→      userId,
+   963→      createdAt: sortedEvents[0].timestamp,
+   964→      lastActiveAt: sortedEvents[sortedEvents.length - 1].timestamp,
+   965→      totalSessions,
+   966→      totalEvents,
+   967→      avgSessionDuration,
+   968→      topPages,
+   969→      devicePreferences,
+   970→      hourlyActivity,
+   971→      weeklyActivity,
+   972→      behaviorScores,
+   973→      segment,
+   974→      engagementLevel,
+   975→      riskScore,
+   976→      churnProbability,
+   977→      predictedLTV,
+   978→      featureAdoption,
+   979→      navigationPatterns,
+   980→      conversionHistory,
+   981→    };
+   982→  }
+   983→
+   984→  /**
+   985→   * Aggregate all sessions for a user
+   986→   * @param userId - User identifier
+   987→   * @returns Array of user sessions
+   988→   */
+   989→  private aggregateUserSessions(userId: string): SessionData[] {
+   990→    const sessions: SessionData[] = [];
+   991→    
+   992→    Array.from(this.sessionStore.values()).forEach((session) => {
+   993→      if (session.userId === userId) {
+   994→        sessions.push(session);
+   995→      }
+   996→    });
+   997→    
+   998→    return sessions.sort((a, b) => a.startTime.getTime() - b.startTime.getTime());
+   999→  }
+  1000→
+  1001→  /**
+  1002→   * Calculate page visit frequencies
+  1003→   * @param events - Sorted array of events
+  1004→   * @returns Top pages by frequency
+  1005→   */
+  1006→  private calculatePageFrequencies(events: BehaviorEvent[]): PageFrequency[] {
+  1007→    const pageCounts = new Map<string, number>();
+  1008→    
+  1009→    for (const event of events) {
+  1010→      if (event.eventType === 'page_view') {
+  1011→        pageCounts.set(event.page, (pageCounts.get(event.page) || 0) + 1);
+  1012→      }
+  1013→    }
+  1014→
+  1015→    const totalPages = Array.from(pageCounts.values()).reduce((a, b) => a + b, 0);
+  1016→    
+  1017→    return Array.from(pageCounts.entries())
+  1018→      .map(([page, count]) => ({
+  1019→        page,
+  1020→        count,
+  1021→        percentage: (count / totalPages) * 100,
+  1022→      }))
+  1023→      .sort((a, b) => b.count - a.count)
+  1024→      .slice(0, 10); // Top 10 pages
+  1025→  }
+  1026→
+  1027→  /**
+  1028→   * Calculate device preferences from sessions
+  1029→   * @param sessions - User sessions
+  1030→   * @returns Device preference breakdown
+  1031→   */
+  1032→  private calculateDevicePreferences(sessions: SessionData[]): DevicePreference[] {
+  1033→    const deviceCounts = new Map<DeviceInfo['deviceType'], number>();
+  1034→    
+  1035→    for (const session of sessions) {
+  1036→      const deviceType = session.deviceInfo.deviceType;
+  1037→      deviceCounts.set(deviceType, (deviceCounts.get(deviceType) || 0) + 1);
+  1038→    }
+  1039→
+  1040→    const totalSessions = sessions.length;
+  1041→    
+  1042→    return Array.from(deviceCounts.entries())
+  1043→      .map(([deviceType, count]) => ({
+  1044→        deviceType,
+  1045→        count,
+  1046→        percentage: (count / totalSessions) * 100,
+  1047→      }))
+  1048→      .sort((a, b) => b.count - a.count);
+  1049→  }
+  1050→
+  1051→  /**
+  1052→   * Calculate activity distribution by hour of day
+  1053→   * @param events - Sorted array of events
+  1054→   * @returns Array of 24 values representing activity per hour
+  1055→   */
+  1056→  private calculateHourlyActivity(events: BehaviorEvent[]): number[] {
+  1057→    const hours = new Array(24).fill(0);
+  1058→    
+  1059→    for (const event of events) {
+  1060→      const hour = event.timestamp.getHours();
+  1061→      hours[hour]++;
+  1062→    }
+  1063→
+  1064→    const maxActivity = Math.max(...hours);
+  1065→    return maxActivity > 0 ? hours.map(h => (h / maxActivity) * 100) : hours;
+  1066→  }
+  1067→
+  1068→  /**
+  1069→   * Calculate activity distribution by day of week
+  1070→   * @param events - Sorted array of events
+  1071→   * @returns Array of 7 values representing activity per day
+  1072→   */
+  1073→  private calculateWeeklyActivity(events: BehaviorEvent[]): number[] {
+  1074→    const days = new Array(7).fill(0);
+  1075→    
+  1076→    for (const event of events) {
+  1077→      const day = event.timestamp.getDay();
+  1078→      days[day]++;
+  1079→    }
+  1080→
+  1081→    const maxActivity = Math.max(...days);
+  1082→    return maxActivity > 0 ? days.map(d => (d / maxActivity) * 100) : days;
+  1083→  }
+  1084→
+  1085→  /**
+  1086→   * Calculate composite behavioral scores
+  1087→   * @param events - Sorted array of events
+  1088→   * @param sessions - User sessions
+  1089→   * @returns Object containing all behavioral scores
+  1090→   */
+  1091→  private calculateBehaviorScores(
+  1092→    events: BehaviorEvent[],
+  1093→    sessions: SessionData[]
+  1094→  ): BehaviorScores {
+  1095→    const weights = this.config.engagementWeights;
+  1096→
+  1097→    // Engagement Score Calculation
+  1098→    let engagementScore = 0;
+  1099→    const eventCounts = new Map<EventType, number>();
+  1100→    
+  1101→    for (const event of events) {
+  1102→      eventCounts.set(event.eventType, (eventCounts.get(event.eventType) || 0) + 1);
+  1103→    }
+  1104→
+  1105→    engagementScore += (eventCounts.get('page_view') || 0) * weights.pageViewWeight;
+  1106→    engagementScore += (eventCounts.get('click') || 0) * weights.clickWeight;
+  1107→    engagementScore += ((eventCounts.get('form_submit') || 0) + (eventCounts.get('form_start') || 0)) * weights.formWeight;
+  1108→    engagementScore += ((eventCounts.get('payment_init') || 0) + (eventCounts.get('payment_complete') || 0)) * weights.paymentWeight;
+  1109→    engagementScore += (eventCounts.get('navigation') || 0) * weights.navigationWeight;
+  1110→    engagementScore += (eventCounts.get('search') || 0) * weights.searchWeight;
+  1111→    engagementScore += (eventCounts.get('item_select') || 0) * weights.featureAdoptionWeight;
+  1112→
+  1113→    // Normalize to 0-100 scale (assuming ~50 weighted events as baseline for 100)
+  1114→    engagementScore = Math.min(100, Math.round((engagementScore / 50) * 100));
+  1115→
+  1116→    // Consistency Score - measures regularity of usage patterns
+  1117→    const consistencyScore = this.calculateConsistencyScore(sessions);
+  1118→
+  1119→    // Conversion Propensity - based on past conversion behavior
+  1120→    const conversionPropensity = this.calculateConversionPropensity(sessions);
+  1121→
+  1122→    // Exploration Score - variety of features/pages explored
+  1123→    const uniquePages = new Set(events.filter(e => e.eventType === 'page_view').map(e => e.page)).size;
+  1124→    const explorationScore = Math.min(100, Math.round((uniquePages / 15) * 100)); // 15+ pages = full score
+  1125→
+  1126→    // Loyalty Score - based on retention and frequency
+  1127→    const loyaltyScore = this.calculateLoyaltyScore(events, sessions);
+  1128→
+  1129→    // Trust Score - based on behavior consistency and risk indicators
+  1130→    const trustScore = this.calculateTrustScore(events, consistencyScore);
+  1131→
+  1132→    return {
+  1133→      engagementScore,
+  1134→      consistencyScore,
+  1135→      conversionPropensity,
+  1136→      explorationScore,
+  1137→      loyaltyScore,
+  1138→      trustScore,
+  1139→    };
+  1140→  }
+  1141→
+  1142→  /**
+  1143→   * Calculate consistency score based on session regularity
+  1144→   * @param sessions - User sessions
+  1145→   * @returns Consistency score 0-100
+  1146→   */
+  1147→  private calculateConsistencyScore(sessions: SessionData[]): number {
+  1148→    if (sessions.length < 2) {
+  1149→      return sessions.length === 1 ? 50 : 0;
+  1150→    }
+  1151→
+  1152→    // Calculate variance in session durations
+  1153→    const durations = sessions.map(s => s.durationSeconds).filter(d => d > 0);
+  1154→    if (durations.length < 2) return 50;
+  1155→
+  1156→    const meanDuration = durations.reduce((a, b) => a + b, 0) / durations.length;
+  1157→    const variance = durations.reduce((sum, d) => sum + Math.pow(d - meanDuration, 2), 0) / durations.length;
+  1158→    const stdDev = Math.sqrt(variance);
+  1159→
+  1160→    // Lower variance = higher consistency (inverse relationship)
+  1161→    // Normalize assuming stdDev of 300+ seconds is low consistency
+  1162→    const consistencyScore = Math.max(0, Math.min(100, Math.round(100 - (stdDev / 3))));
+  1163→    
+  1164→    return consistencyScore;
+  1165→  }
+  1166→
+  1167→  /**
+  1168→   * Calculate conversion propensity based on historical data
+  1169→   * @param sessions - User sessions
+  1170→   * @returns Conversion propensity score 0-100
+  1171→   */
+  1172→  private calculateConversionPropensity(sessions: SessionData[]): number {
+  1173→    if (sessions.length === 0) return 0;
+  1174→
+  1175→    const convertedSessions = sessions.filter(s => s.converted).length;
+  1176→    const baseRate = (convertedSessions / sessions.length) * 100;
+  1177→
+  1178→    // Factor in recent conversion velocity
+  1179→    const recentSessions = sessions.slice(-10); // Last 10 sessions
+  1180→    const recentConversionRate = recentSessions.length > 0
+  1181→      ? (recentSessions.filter(s => s.converted).length / recentSessions.length) * 100
+  1182→      : 0;
+  1183→
+  1184→    // Weight recent conversions more heavily
+  1185→    const weightedScore = Math.round(baseRate * 0.4 + recentConversionRate * 0.6);
+  1186→    
+  1187→    return Math.min(100, weightedScore);
+  1188→  }
+  1189→
+  1190→  /**
+  1191→   * Calculate loyalty score based on usage patterns
+  1192→   * @param events - User events
+  1193→   * @param sessions - User sessions
+  1194→   * @returns Loyalty score 0-100
+  1195→   */
+  1196→  private calculateLoyaltyScore(events: BehaviorEvent[], sessions: SessionData[]): number {
+  1197→    if (events.length === 0) return 0;
+  1198→
+  1199→    const firstEvent = events[0].timestamp;
+  1200→    const lastEvent = events[events.length - 1].timestamp;
+  1201→    const daysActive = (lastEvent.getTime() - firstEvent.getTime()) / (1000 * 60 * 60 * 24);
+  1202→
+  1203→    if (daysActive < 1) return 30; // New user baseline
+  1204→
+  1205→    // Frequency component
+  1206→    const frequencyScore = Math.min(100, (sessions.length / daysActive) * 20); // 5+ sessions/day = 100
+  1207→
+  1208→    // Recency component (more recent activity = higher loyalty indicator)
+  1209→    const daysSinceLastActivity = (Date.now() - lastEvent.getTime()) / (1000 * 60 * 60 * 24);
+  1210→    const recencyScore = Math.max(0, Math.min(100, 100 - (daysSinceLastActivity * 3))); // Lose 3 pts/day
+  1211→
+  1212→    // Duration component (longer tenure = higher loyalty)
+  1213→    const tenureScore = Math.min(100, daysActive * 2); // 50+ days = 100
+  1214→
+  1215→    return Math.round(frequencyScore * 0.35 + recencyScore * 0.35 + tenureScore * 0.3);
+  1216→  }
+  1217→
+  1218→  /**
+  1219→   * Calculate trust score based on behavior patterns
+  1220→   * @param events - User events
+  1221→   * @param consistencyScore - Pre-calculated consistency score
+  1222→   * @returns Trust score 0-100
+  1223→   */
+  1224→  private calculateTrustScore(events: BehaviorEvent[], consistencyScore: number): number {
+  1225→    let trustScore = 50; // Start at neutral
+  1226→
+  1227→    // Consistency contributes positively
+  1228→    trustScore += (consistencyScore - 50) * 0.3;
+  1229→
+  1230→    // Check for suspicious patterns
+  1231→    const rapidActions = this.detectRapidActionPattern(events);
+  1232→    if (rapidActions.detected) {
+  1233→      trustScore -= 20;
+  1234→    }
+  1235→
+  1236→    // Check for unusual timing patterns
+  1237→    const unusualTiming = this.detectUnusualTiming(events);
+  1238→    if (unusualTiming) {
+  1239→      trustScore -= 10;
+  1240→    }
+  1241→
+  1242→    // Positive signals
+  1243→    const hasVerificationEvents = events.some(e => 
+  1244→      e.eventType === 'payment_complete' || e.eventType === 'kyc_submitted' as EventType
+  1245→    );
+  1246→    if (hasVerificationEvents) {
+  1247→      trustScore += 15;
+  1248→    }
+  1249→
+  1250→    // Regular login pattern
+  1251→    const loginEvents = events.filter(e => e.eventType === 'login');
+  1252→    if (loginEvents.length >= 3) {
+  1253→      trustScore += 10;
+  1254→    }
+  1255→
+  1256→    return Math.max(0, Math.min(100, Math.round(trustScore)));
+  1257→  }
+  1258→
+  1259→  /**
+  1260→   * Detect rapid/suspicious action patterns
+  1261→   * @param events - Events to analyze
+  1262→   * @returns Detection result
+  1263→   */
+  1264→  private detectRapidActionPattern(events: BehaviorEvent[]): { detected: boolean; details?: string } {
+  1265→    if (events.length < 5) return { detected: false };
+  1266→
+  1267→    // Check for multiple rapid-fire actions (< 1 second apart)
+  1268→    let rapidCount = 0;
+  1269→    for (let i = 1; i < events.length; i++) {
+  1270→      const timeDiff = events[i].timestamp.getTime() - events[i - 1].timestamp.getTime();
+  1271→      if (timeDiff < 1000) { // Less than 1 second
+  1272→        rapidCount++;
+  1273→      }
+  1274→    }
+  1275→
+  1276→    if (rapidCount > events.length * 0.3) { // More than 30% rapid actions
+  1277→      return { detected: true, details: `${rapidCount} rapid actions detected` };
+  1278→    }
+  1279→
+  1280→    return { detected: false };
+  1281→  }
+  1282→
+  1283→  /**
+  1284→   * Detect unusual timing patterns (e.g., activity at odd hours consistently)
+  1285→   * @param events - Events to analyze
+  1286→   * @returns True if unusual pattern detected
+  1287→   */
+  1288→  private detectUnusualTiming(events: BehaviorEvent[]): boolean {
+  1289→    if (events.length < 10) return false;
+  1290→
+  1291→    const lateNightEvents = events.filter(e => {
+  1292→      const hour = e.timestamp.getHours();
+  1293→      return hour >= 1 && hour <= 4; // 1 AM - 4 AM
+  1294→    });
+  1295→
+  1296→    // If more than 40% of activity is between 1-4 AM, flag as unusual
+  1297→    return lateNightEvents.length > events.length * 0.4;
+  1298→  }
+  1299→
+  1300→  /**
+  1301→   * Determine user segment based on behavior patterns
+  1302→   * @param events - User events
+  1303→   * @param sessions - User sessions
+  1304→   * @param scores - Behavioral scores
+  1305→   * @returns Assigned user segment
+  1306→   */
+  1307→  private determineUserSegment(
+  1308→    events: BehaviorEvent[],
+  1309→    sessions: SessionData[],
+  1310→    scores: BehaviorScores
+  1311→  ): UserSegment {
+  1312→    const thresholds = this.config.segmentationThresholds;
+  1313→    const lastEvent = events[events.length - 1];
+  1314→    const daysSinceLastActivity = (Date.now() - lastEvent.timestamp.getTime()) / (1000 * 60 * 60 * 24);
+  1315→
+  1316→    // Check for churned user first
+  1317→    if (daysSinceLastActivity > thresholds.churnedDaysInactive) {
+  1318→      return 'churned_user';
+  1319→    }
+  1320→
+  1321→    // Check for at-risk user
+  1322→    if (daysSinceLastActivity > thresholds.atRiskDaysInactive) {
+  1323→      return 'at_risk_user';
+  1324→    }
+  1325→
+  1326→    // Check for power user
+  1327→    if (sessions.length >= thresholds.powerUserThreshold && scores.engagementScore >= thresholds.highEngagementScore) {
+  1328→      return 'power_user';
+  1329→    }
+  1330→
+  1331→    // Check for premium/business user (based on transaction volume)
+  1332→    const paymentEvents = events.filter(e => 
+  1333→      e.eventType === 'payment_complete' || e.eventType === 'payment_init'
+  1334→    );
+  1335→    if (paymentEvents.length >= thresholds.businessUserMinTransactions) {
+  1336→      return 'business_user';
+  1337→    }
+  1338→
+  1339→    // Check for premium user (high value, high engagement)
+  1340→    if (scores.loyaltyScore >= 80 && scores.trustScore >= 80) {
+  1341→      return 'premium_user';
+  1342→    }
+  1343→
+  1344→    // Active user check
+  1345→    if (scores.engagementScore >= 50 && sessions.length >= 5) {
+  1346→      return 'active_user';
+  1347→    }
+  1348→
+  1349→    // New user (less than 7 days since first event)
+  1350→    const firstEvent = events[0];
+  1351→    const daysSinceFirstEvent = (Date.now() - firstEvent.timestamp.getTime()) / (1000 * 60 * 60 * 24);
+  1352→    if (daysSinceFirstEvent <= 7) {
+  1353→      return 'new_user';
+  1354→    }
+  1355→
+  1356→    // Default to casual user
+  1357→    return 'casual_user';
+  1358→  }
+  1359→
+  1360→  /**
+  1361→   * Determine engagement level from engagement score
+  1362→   * @param engagementScore - Calculated engagement score
+  1363→   * @returns Engagement level classification
+  1364→   */
+  1365→  private determineEngagementLevel(engagementScore: number): EngagementLevel {
+  1366→    if (engagementScore >= 85) return 'very_high';
+  1367→    if (engagementScore >= 65) return 'high';
+  1368→    if (engagementScore >= 35) return 'medium';
+  1369→    return 'low';
+  1370→  }
+  1371→
+  1372→  /**
+  1373→   * Calculate risk score for fraud/security purposes
+  1374→   * @param events - User events
+  1375→   * @param scores - Behavioral scores
+  1376→   * @returns Risk score 0-100 (higher = more risky)
+  1377→   */
+  1378→  private calculateRiskScore(events: BehaviorEvent[], scores: BehaviorScores): number {
+  1379→    let riskScore = 0;
+  1380→
+  1381→    // Low trust increases risk
+  1382→    riskScore += (100 - scores.trustScore) * 0.4;
+  1383→
+  1384→    // Inconsistent behavior increases risk
+  1385→    riskScore += (100 - scores.consistencyScore) * 0.2;
+  1386→
+  1387→    // Rapid action detection
+  1388→    const rapidActions = this.detectRapidActionPattern(events);
+  1389→    if (rapidActions.detected) {
+  1390→      riskScore += 25;
+  1391→    }
+  1392→
+  1393→    // Multiple failed payments
+  1394→    const failedPayments = events.filter(e => e.eventType === 'payment_failed').length;
+  1395→    riskScore += Math.min(20, failedPayments * 5);
+  1396→
+  1397→    // Device diversity (using many devices can be risky)
+  1398→    const devices = new Set(events.map(e => e.deviceInfo.deviceId));
+  1399→    if (devices.size > 5) {
+  1400→      riskScore += 15;
+  1401→    }
+  1402→
+  1403→    // Geographic anomalies (if geo data available)
+  1404→    const geoAnomaly = this.detectGeoAnomalies(events);
+  1405→    if (geoAnomaly) {
+  1406→      riskScore += 20;
+  1407→    }
+  1408→
+  1409→    return Math.min(100, Math.round(riskScore));
+  1410→  }
+  1411→
+  1412→  /**
+  1413→   * Detect geographic anomalies in user behavior
+  1414→   * @param events - Events with potential geo data
+  1415→   * @returns True if anomaly detected
+  1416→   */
+  1417→  private detectGeoAnomalies(events: BehaviorEvent[]): boolean {
+  1418→    const eventsWithGeo = events.filter(e => e.geoLocation);
+  1419→    if (eventsWithGeo.length < 2) return false;
+  1420→
+  1421→    const countries = new Set(eventsWithGeo.map(e => e.geoLocation?.countryCode));
+  1422→    
+  1423→    // Multiple countries in short time frame is suspicious
+  1424→    if (countries.size > 2) {
+  1425→      // Check if they appeared in different countries within 24 hours
+  1426→      for (let i = 1; i < eventsWithGeo.length; i++) {
+  1427→        const prev = eventsWithGeo[i - 1];
+  1428→        const curr = eventsWithGeo[i];
+  1429→        const timeDiff = curr.timestamp.getTime() - prev.timestamp.getTime();
+  1430→        const hoursDiff = timeDiff / (1000 * 60 * 60);
+  1431→        
+  1432→        if (hoursDiff < 24 && prev.geoLocation?.countryCode !== curr.geoLocation?.countryCode) {
+  1433→          return true;
+  1434→        }
+  1435→      }
+  1436→    }
+  1437→
+  1438→    return false;
+  1439→  }
+  1440→
+  1441→  /**
+  1442→   * Calculate churn probability using behavioral indicators
+  1443→   * @param events - User events
+  1444→   * @param scores - Behavioral scores
+  1445→   * @param sessions - User sessions
+  1446→   * @returns Churn probability 0-1
+  1447→   */
+  1448→  private calculateChurnProbability(
+  1449→    events: BehaviorEvent[],
+  1450→    scores: BehaviorScores,
+  1451→    sessions: SessionData[]
+  1452→  ): number {
+  1453→    let churnProbability = 0;
+  1454→
+  1455→    // Recency factor (most important)
+  1456→    const lastEvent = events[events.length - 1];
+  1457→    const daysSinceLastActivity = (Date.now() - lastEvent.timestamp.getTime()) / (1000 * 60 * 60 * 24);
+  1458→    
+  1459→    if (daysSinceLastActivity > 30) {
+  1460→      churnProbability += 0.5;
+  1461→    } else if (daysSinceLastActivity > 14) {
+  1462→      churnProbability += 0.3;
+  1463→    } else if (daysSinceLastActivity > 7) {
+  1464→      churnProbability += 0.15;
+  1465→    }
+  1466→
+  1467→    // Engagement decline factor
+  1468→    if (scores.engagementScore < 30) {
+  1469→      churnProbability += 0.2;
+  1470→    } else if (scores.engagementScore < 50) {
+  1471→      churnProbability += 0.1;
+  1472→    }
+  1473→
+  1474→    // Session frequency decline
+  1475→    if (sessions.length >= 3) {
+  1476→      const recentSessions = sessions.slice(-3);
+  1477→      const olderSessions = sessions.slice(0, 3);
+  1478→      const recentAvgDuration = recentSessions.reduce((s, sess) => s + sess.durationSeconds, 0) / 3;
+  1479→      const olderAvgDuration = olderSessions.reduce((s, sess) => s + sess.durationSeconds, 0) / 3;
+  1480→      
+  1481→      if (olderAvgDuration > 0 && recentAvgDuration < olderAvgDuration * 0.5) {
+  1482→        churnProbability += 0.15;
+  1483→      }
+  1484→    }
+  1485→
+  1486→    // Loyalty factor (inverse)
+  1487→    churnProbability += (100 - scores.loyaltyScore) * 0.002;
+  1488→
+  1489→    return Math.min(1, Math.round(churnProbability * 100) / 100);
+  1490→  }
+  1491→
+  1492→  /**
+  1493→   * Predict customer lifetime value
+  1494→   * @param sessions - User sessions
+  1495→   * @param scores - Behavioral scores
+  1496→   * @returns Predicted LTV in base currency units
+  1497→   */
+  1498→  private predictLifetimeValue(sessions: SessionData[], scores: BehaviorScores): number {
+  1499→    // Base LTV calculation using simplified model
+  1500→    const avgTransactionValue = 150; // Base assumption
+  1501→    
+  1502→    // Adjust based on engagement and loyalty
+  1503→    const engagementMultiplier = 0.5 + (scores.engagementScore / 100);
+  1504→    const loyaltyMultiplier = 0.5 + (scores.loyaltyScore / 100);
+  1505→    
+  1506→    // Estimate transactions per month based on session frequency
+  1507→    const monthlySessions = sessions.length / Math.max(1, this.getMonthsFromFirstSession(sessions));
+  1508→    const estimatedMonthlyTxns = Math.min(monthlySessions * 0.3, 10); // Cap at 10/month
+  1509→    
+  1510→    // Project over 12 months
+  1511→    const projectedMonths = 12 * loyaltyMultiplier;
+  1512→    
+  1513→    return Math.round(avgTransactionValue * estimatedMonthlyTxns * engagementMultiplier * projectedMonths);
+  1514→  }
+  1515→
+  1516→  /**
+  1517→   * Get months elapsed since first session
+  1518→   * @param sessions - User sessions
+  1519→   * @returns Number of months (minimum 1)
+  1520→   */
+  1521→  private getMonthsFromFirstSession(sessions: SessionData[]): number {
+  1522→    if (sessions.length === 0) return 1;
+  1523→    
+  1524→    const firstSession = sessions[0];
+  1525→    const months = (Date.now() - firstSession.startTime.getTime()) / (1000 * 60 * 60 * 24 * 30);
+  1526→    return Math.max(1, months);
+  1527→  }
+  1528→
+  1529→  /**
+  1530→   * Analyze feature adoption across the platform
+  1531→   * @param events - User events
+  1532→   * @returns Map of feature adoption statuses
+  1533→   */
+  1534→  private analyzeFeatureAdoption(events: BehaviorEvent[]): Record<string, AdoptionStatus> {
+  1535→    const features: Record<string, AdoptionStatus> = {
+  1536→      payments: 'not_adopted',
+  1537→      zainbox: 'not_adopted',
+  1538→      dashboard: 'not_adopted',
+  1539→      search: 'not_adopted',
+  1540→      filters: 'not_adopted',
+  1541→      sharing: 'not_adopted',
+  1542→      feedback: 'not_adopted',
+  1543→    };
+  1544→
+  1545→    // Check payment feature adoption
+  1546→    const paymentEvents = events.filter(e => 
+  1547→      e.eventType === 'payment_init' || e.eventType === 'payment_complete'
+  1548→    );
+  1549→    if (paymentEvents.length > 0) {
+  1550→      features.payments = paymentEvents.length >= 5 ? 'power_user' :
+  1551→                          paymentEvents.length >= 3 ? 'adopted' :
+  1552→                          paymentEvents.length >= 1 ? 'trialing' : 'not_adopted';
+  1553→    }
+  1554→
+  1555→    // Check zainbox feature
+  1556→    const zainboxEvents = events.filter(e => 
+  1557→      e.page.includes('zainbox') || e.metadata.zainbox_action
+  1558→    );
+  1559→    if (zainboxEvents.length > 0) {
+  1560→      features.zainbox = zainboxEvents.length >= 10 ? 'power_user' :
+  1561→                         zainboxEvents.length >= 5 ? 'adopted' :
+  1562→                         zainboxEvents.length >= 1 ? 'trialing' : 'not_adopted';
+  1563→    }
+  1564→
+  1565→    // Check dashboard usage
+  1566→    const dashboardViews = events.filter(e => e.page.includes('dashboard')).length;
+  1567→    if (dashboardViews > 0) {
+  1568→      features.dashboard = dashboardViews >= 20 ? 'power_user' :
+  1569→                           dashboardViews >= 10 ? 'adopted' :
+  1570→                           dashboardViews >= 3 ? 'trialing' : 'aware';
+  1571→    }
+  1572→
+  1573→    // Check search usage
+  1574→    const searchEvents = events.filter(e => e.eventType === 'search').length;
+  1575→    if (searchEvents > 0) {
+  1576→      features.search = searchEvents >= 10 ? 'power_user' :
+  1577→                        searchEvents >= 5 ? 'adopted' :
+  1578→                        searchEvents >= 1 ? 'trialing' : 'not_adopted';
+  1579→    }
+  1580→
+  1581→    // Check filter usage
+  1582→    const filterEvents = events.filter(e => e.eventType === 'filter_apply').length;
+  1583→    if (filterEvents > 0) {
+  1584→      features.filters = filterEvents >= 10 ? 'power_user' :
+  1585→                         filterEvents >= 5 ? 'adopted' :
+  1586→                         filterEvents >= 1 ? 'trialing' : 'not_adopted';
+  1587→    }
+  1588→
+  1589→    // Check sharing
+  1590→    const shareEvents = events.filter(e => e.eventType === 'share').length;
+  1591→    if (shareEvents > 0) {
+  1592→      features.sharing = shareEvents >= 5 ? 'power_user' :
+  1593→                         shareEvents >= 2 ? 'adopted' :
+  1594→                         shareEvents >= 1 ? 'trialing' : 'not_adopted';
+  1595→    }
+  1596→
+  1597→    // Check feedback
+  1598→    const feedbackEvents = events.filter(e => e.eventType === 'feedback_submit').length;
+  1599→    if (feedbackEvents > 0) {
+  1600→      features.feedback = feedbackEvents >= 3 ? 'power_user' :
+  1601→                          feedbackEvents >= 1 ? 'adopted' : 'not_adopted';
+  1602→    }
+  1603→
+  1604→    return features;
+  1605→  }
+  1606→
+  1607→  /**
+  1608→   * Identify common navigation patterns from sessions
+  1609→   * @param sessions - User sessions
+  1610→   * @returns Array of identified navigation patterns
+  1611→   */
+  1612→  private identifyNavigationPatterns(sessions: SessionData[]): NavigationPattern[] {
+  1613→    const patternMap = new Map<string, {
+  1614→      sequences: string[][];
+  1615→      durations: number[];
+  1616→      conversions: number;
+  1617→      totalCount: number;
+  1618→    }>();
+  1619→
+  1620→    for (const session of sessions) {
+  1621→      if (session.pagesVisited.length < 2) continue;
+  1622→
+  1623→      // Extract page sequence (limit to 5 pages for pattern matching)
+  1624→      const sequence = session.pagesVisited.slice(0, 5);
+  1625→      const patternKey = sequence.join(' -> ');
+  1626→
+  1627→      const existing = patternMap.get(patternKey) || {
+  1628→        sequences: [],
+  1629→        durations: [],
+  1630→        conversions: 0,
+  1631→        totalCount: 0,
+  1632→      };
+  1633→
+  1634→      existing.sequences.push(sequence);
+  1635→      existing.durations.push(session.durationSeconds);
+  1636→      if (session.converted) existing.conversions++;
+  1637→      existing.totalCount++;
+  1638→
+  1639→      patternMap.set(patternKey, existing);
+  1640→    }
+  1641→
+  1642→    // Convert to NavigationPattern array
+  1643→    const patterns: NavigationPattern[] = [];
+  1644→
+  1645→    let index = 0;
+  1646→    for (const [key, data] of Array.from(patternMap.entries())) {
+  1647→      if (data.totalCount < 2) continue; // Require at least 2 occurrences
+  1648→
+  1649→      const avgDuration = data.durations.reduce((a, b) => a + b, 0) / data.durations.length;
+  1650→      const conversionRate = data.conversions / data.totalCount;
+  1651→      
+  1652→      // Generate pattern name from key
+  1653→      const name = this.generatePatternName(key);
+  1654→
+  1655→      patterns.push({
+  1656→        id: `pattern_${index++}`,
+  1657→        name,
+  1658→        pageSequence: data.sequences[0],
+  1659→        frequency: data.totalCount,
+  1660→        avgDuration: Math.round(avgDuration),
+  1661→        conversionRate: Math.round(conversionRate * 100) / 100,
+  1662→        confidence: Math.min(1, data.totalCount / 10), // More occurrences = higher confidence
+  1663→      });
+  1664→    }
+  1665→
+  1666→    // Sort by frequency and return top patterns
+  1667→    return patterns.sort((a, b) => b.frequency - a.frequency).slice(0, 10);
+  1668→  }
+  1669→
+  1670→  /**
+  1671→   * Generate human-readable pattern name
+  1672→   * @param patternKey - Pattern key string
+  1673→   * @returns Human-readable name
+  1674→   */
+  1675→  private generatePatternName(patternKey: string): string {
+  1676→    const pages = patternKey.split(' -> ');
+  1677→    
+  1678→    // Common pattern mappings
+  1679→    const patternNames: Record<string, string> = {
+  1680→      '/dashboard': 'Dashboard',
+  1681→      '/dashboard/payment': 'Payment',
+  1682→      '/dashboard/zainbox': 'ZainBox',
+  1683→      '/dashboard/zainbox/list': 'ZainBox List',
+  1684→      '/dashboard/zainbox/create': 'ZainBox Create',
+  1685→      '/login': 'Login',
+  1686→      '/signup': 'Signup',
+  1687→      '/callback': 'Callback',
+  1688→    };
+  1689→
+  1690→    const mappedPages = pages.map(p => patternNames[p] || p.replace('/', ''));
+  1691→    
+  1692→    if (mappedPages.length <= 3) {
+  1693→      return mappedPages.join(' → ');
+  1694→    }
+  1695→    
+  1696→    return `${mappedPages[0]} → ${mappedPages[1]} → ... → ${mappedPages[mappedPages.length - 1]}`;
+  1697→  }
+  1698→
+  1699→  /**
+  1700→   * Extract conversion history from sessions
+  1701→   * @param sessions - User sessions
+  1702→   * @returns Array of conversion records
+  1703→   */
+  1704→  private extractConversionHistory(sessions: SessionData[]): ConversionRecord[] {
+  1705→    const conversions: ConversionRecord[] = [];
+  1706→
+  1707→    for (const session of sessions) {
+  1708→      if (!session.converted || !session.conversionType) continue;
+  1709→
+  1710→      const conversionEvent = session.events.find(e => 
+  1711→        this.isConversionEvent(e.eventType)
+  1712→      );
+  1713→
+  1714→      if (conversionEvent) {
+  1715→        conversions.push({
+  1716→          type: session.conversionType!,
+  1717→          timestamp: conversionEvent.timestamp,
+  1718→          sessionId: session.sessionId,
+  1719→          timeToConvert: Math.floor(
+  1720→            (conversionEvent.timestamp.getTime() - session.startTime.getTime()) / 1000
+  1721→          ),
+  1722→          funnelStepsCompleted: session.pagesVisited,
+  1723→        });
+  1724→      }
+  1725→    }
+  1726→
+  1727→    return conversions.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
+  1728→  }
+  1729→
+  1730→  /**
+  1731→   * Get session data by session ID
+  1732→   * @param sessionId - Session identifier
+  1733→   * @returns Session data or null if not found
+  1734→   */
+  1735→  async getSession(sessionId: string): Promise<SessionData | null> {
+  1736→    this.ensureInitialized();
+  1737→    return this.sessionStore.get(sessionId) || null;
+  1738→  }
+  1739→
+  1740→  /**
+  1741→   * Get all sessions for a user
+  1742→   * @param userId - User identifier
+  1743→   * @returns Array of session data
+  1744→   */
+  1745→  async getUserSessions(userId: string): Promise<SessionData[]> {
+  1746→    this.ensureInitialized();
+  1747→    return this.aggregateUserSessions(userId);
+  1748→  }
+  1749→
+  1750→  /**
+  1751→   * Analyze a conversion funnel
+  1752→   * @param funnel - Funnel definition to analyze
+  1753→   * @param options - Analysis options
+  1754→   * @returns Funnel analysis results
+  1755→   */
+  1756→  async analyzeFunnel(
+  1757→    funnel: ConversionFunnel,
+  1758→    options?: { startDate?: Date; endDate?: Date; userId?: string }
+  1759→  ): Promise<FunnelAnalysis> {
+  1760→    this.ensureInitialized();
+  1761→
+  1762→    const startDate = options?.startDate || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+  1763→    const endDate = options?.endDate || new Date();
+  1764→
+  1765→    // Collect all sessions in date range
+  1766→    let relevantSessions: SessionData[] = [];
+  1767→    
+  1768→    Array.from(this.sessionStore.values()).forEach((session) => {
+  1769→      if (session.startTime >= startDate && session.startTime <= endDate) {
+  1770→        if (!options?.userId || session.userId === options.userId) {
+  1771→          relevantSessions.push(session);
+  1772→        }
+  1773→      }
+  1774→    });
+  1775→
+  1776→    // Initialize step counts
+  1777→    const stepCounts = new Array(funnel.steps.length).fill(0);
+  1778→    const totalTimePerStep = new Array(funnel.steps.length).fill(0);
+  1779→    const usersAtEachStep = new Map<number, Set<string>>();
+  1780→
+  1781→    // Process each session through the funnel
+  1782→    for (const session of relevantSessions) {
+  1783→      let maxStepReached = -1;
+  1784→      const stepTimes: number[] = [];
+  1785→
+  1786→      for (let stepIndex = 0; stepIndex < funnel.steps.length; stepIndex++) {
+  1787→        const step = funnel.steps[stepIndex];
+  1788→        
+  1789→        // Find matching event in session
+  1790→        const matchingEvent = session.events.find(e => 
+  1791→          e.eventType === step.expectedEventType &&
+  1792→          (e.page === step.pageOrAction || e.element === step.pageOrAction)
+  1793→        );
+  1794→
+  1795→        if (matchingEvent) {
+  1796→          maxStepReached = stepIndex;
+  1797→          stepTimes[stepIndex] = matchingEvent.timestamp.getTime();
+  1798→          
+  1799→          if (!usersAtEachStep.has(stepIndex)) {
+  1800→            usersAtEachStep.set(stepIndex, new Set());
+  1801→          }
+  1802→          usersAtEachStep.get(stepIndex)!.add(session.userId);
+  1803→        } else {
+  1804→          break; // User didn't complete this step
+  1805→        }
+  1806→      }
+  1807→
+  1808→      // Update counts for reached steps
+  1809→      for (let i = 0; i <= maxStepReached; i++) {
+  1810→        stepCounts[i]++;
+  1811→      }
+  1812→
+  1813→      // Calculate time spent at each step
+  1814→      for (let i = 0; i < stepTimes.length - 1; i++) {
+  1815→        if (stepTimes[i] && stepTimes[i + 1]) {
+  1816→          totalTimePerStep[i] += (stepTimes[i + 1] - stepTimes[i]) / 1000;
+  1817→        }
+  1818→      }
+  1819→    }
+  1820→
+  1821→    // Calculate conversion rates between steps
+  1822→    const stepConversionRates: number[] = [];
+  1823→    for (let i = 0; i < stepCounts.length; i++) {
+  1824→      if (i === 0) {
+  1825→        stepConversionRates.push(100); // Entry step is 100%
+  1826→      } else if (stepCounts[i - 1] > 0) {
+  1827→        stepConversionRates.push(Math.round((stepCounts[i] / stepCounts[i - 1]) * 10000) / 100);
+  1828→      } else {
+  1829→        stepConversionRates.push(0);
+  1830→      }
+  1831→    }
+  1832→
+  1833→    // Calculate overall conversion rate
+  1834→    const overallConversionRate = stepCounts[0] > 0
+  1835→      ? Math.round((stepCounts[stepCounts.length - 1] / stepCounts[0]) * 10000) / 100
+  1836→      : 0;
+  1837→
+  1838→    // Calculate average time per step
+  1839→    const avgTimePerStep = stepCounts.map((count, i) =>
+  1840→      count > 0 ? Math.round(totalTimePerStep[i] / count) : 0
+  1841→    );
+  1842→
+  1843→    // Identify drop-off points
+  1844→    const dropOffPoints: DropOffPoint[] = [];
+  1845→    for (let i = 1; i < stepCounts.length; i++) {
+  1846→      const dropped = stepCounts[i - 1] - stepCounts[i];
+  1847→      if (dropped > 0) {
+  1848→        const dropOffRate = Math.round((dropped / stepCounts[i - 1]) * 10000) / 100;
+  1849→        dropOffPoints.push({
+  1850→          stepIndex: i,
+  1851→          stepName: funnel.steps[i].name,
+  1852→          droppedUsers: dropped,
+  1853→          dropOffRate,
+  1854→          reasons: this.inferDropOffReasons(funnel.steps[i], dropOffRate),
+  1855→        });
+  1856→      }
+  1857→    }
+  1858→
+  1859→    const analysis: FunnelAnalysis = {
+  1860→      totalEntries: stepCounts[0] || 0,
+  1861→      stepCounts,
+  1862→      stepConversionRates,
+  1863→      overallConversionRate,
+  1864→      dropOffPoints,
+  1865→      avgTimePerStep,
+  1866→      periodStart: startDate,
+  1867→      periodEnd: endDate,
+  1868→    };
+  1869→
+  1870→    logger.info('Funnel analysis completed', {
+  1871→      event: 'behavioral_analytics.funnel_analyzed',
+  1872→      metadata: {
+  1873→        funnelId: funnel.id,
+  1874→        funnelName: funnel.name,
+  1875→        overallConversionRate,
+  1876→        totalEntries: analysis.totalEntries,
+  1877→      },
+  1878→    });
+  1879→
+  1880→    return analysis;
+  1881→  }
+  1882→
+  1883→  /**
+  1884→   * Infer possible reasons for drop-off at a funnel step
+  1885→   * @param step - The funnel step where drop-off occurred
+  1886→   * @param dropOffRate - The drop-off rate percentage
+  1887→   * @returns Array of inferred reasons
+  1888→   */
+  1889→  private inferDropOffReasons(step: FunnelStep, dropOffRate: number): string[] {
+  1890→    const reasons: string[] = [];
+  1891→
+  1892→    if (dropOffRate > 50) {
+  1893→      reasons.push('High friction at this step');
+  1894→    }
+  1895→
+  1896→    if (step.expectedEventType === 'form_submit' || step.expectedEventType === 'payment_init') {
+  1897→      reasons.push('Complex form or payment process');
+  1898→      reasons.push('Possible technical issues');
+  1899→    }
+  1900→
+  1901→    if (step.expectedEventType === 'signup') {
+  1902→      reasons.push('Account creation barrier');
+  1903→      reasons.push('Privacy concerns');
+  1904→    }
+  1905→
+  1906→    if (dropOffRate > 30 && dropOffRate <= 50) {
+  1907→      reasons.push('Moderate friction or distraction');
+  1908→    }
+  1909→
+  1910→    return reasons;
+  1911→  }
+  1912→
+  1913→  /**
+  1914→   * Generate behavior-based recommendations
+  1915→   * @param options - Options for recommendation generation
+  1916→   * @returns Array of recommendations
+  1917→   */
+  1918→  async generateRecommendations(
+  1919→    options?: { userId?: string; segment?: UserSegment; categories?: RecommendationCategory[] }
+  1920→  ): Promise<BehaviorRecommendation[]> {
+  1921→    this.ensureInitialized();
+  1922→
+  1923→    const recommendations: BehaviorRecommendation[] = [];
+  1924→    const categories = options?.categories || [
+  1925→      'engagement', 'retention', 'conversion', 'upsell', 'onboarding', 'win_back'
+  1926→    ];
+  1927→
+  1928→    // Generate user-specific recommendations
+  1929→    if (options?.userId) {
+  1930→      try {
+  1931→        const profile = await this.getUserProfile(options.userId);
+  1932→        const userRecs = this.generateUserSpecificRecommendations(profile, categories);
+  1933→        recommendations.push(...userRecs);
+  1934→      } catch {
+  1935→        // User may not have enough data
+  1936→        logger.warn('Cannot generate recommendations for user - insufficient data', {
+  1937→          event: 'behavioral_analytics.recommendation_skip',
+  1938→          metadata: { userId: options.userId },
+  1939→        });
+  1940→      }
+  1941→    }
+  1942→
+  1943→    // Generate segment-based recommendations
+  1944→    if (options?.segment) {
+  1945→      const segmentRecs = this.generateSegmentRecommendations(options.segment, categories);
+  1946→      recommendations.push(...segmentRecs);
+  1947→    }
+  1948→
+  1949→    // If no specific target, generate general recommendations
+  1950→    if (!options?.userId && !options?.segment) {
+  1951→      const generalRecs = this.generateGeneralRecommendations(categories);
+  1952→      recommendations.push(...generalRecs);
+  1953→    }
+  1954→
+  1955→    logger.info(`Generated ${recommendations.length} recommendations`, {
+  1956→      event: 'behavioral_analytics.recommendations_generated',
+  1957→      metadata: {
+  1958→        userId: options?.userId,
+  1959→        segment: options?.segment,
+  1960→        recommendationCount: recommendations.length,
+  1961→      },
+  1962→    });
+  1963→
+  1964→    return recommendations;
+  1965→  }
+  1966→
+  1967→  /**
+  1968→   * Generate recommendations specific to a user
+  1969→   * @param profile - User behavior profile
+  1970→   * @param categories - Categories to generate recommendations for
+  1971→   * @returns Array of user-specific recommendations
+  1972→   */
+  1973→  private generateUserSpecificRecommendations(
+  1974→    profile: UserProfile,
+  1975→    categories: RecommendationCategory[]
+  1976→  ): BehaviorRecommendation[] {
+  1977→    const recs: BehaviorRecommendation[] = [];
+  1978→    let recIndex = 0;
+  1979→
+  1980→    // Churn prevention for at-risk users
+  1981→    if (categories.includes('retention') && profile.churnProbability > 0.5) {
+  1982→      recs.push({
+  1983→        id: `rec_user_${profile.userId}_${recIndex++}`,
+  1984→        targetUserId: profile.userId,
+  1985→        category: 'retention',
+  1986→        priority: profile.churnProbability > 0.7 ? 'critical' : 'high',
+  1987→        title: 'Re-engagement campaign needed',
+  1988→        description: `User shows ${Math.round(profile.churnProbability * 100)}% churn probability based on declining engagement patterns.`,
+  1989→        actions: [
+  1990→          {
+  1991→            id: `action_${recIndex}`,
+  1992→            description: 'Send personalized re-engagement email highlighting new features',
+  1993→            channel: 'email',
+  1994→            effort: 'low',
+  1995→            timeframe: 'Immediate',
+  1996→          },
+  1997→          {
+  1998→            id: `action_${recIndex + 1}`,
+  1999→            description: 'Offer exclusive discount or incentive on next transaction',
+  2000→            channel: 'in_app',
+
+[showing lines 1-2000 of 2639; use offset=2001 with limit to continue reading]

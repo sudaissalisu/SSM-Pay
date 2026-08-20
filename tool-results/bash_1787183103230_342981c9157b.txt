@@ -1,0 +1,299 @@
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - ESM syntax in a file loaded as CommonJS (vitest.config.ts:1:1). Use a `.mjs` extension or set `"type": "module"` in the closest package.json
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v4.1.11 /home/z/SSM-Pay
+
+stderr | src/lib/ml/transaction-predictor.test.ts > Moving Averages and Smoothing > holtWintersSmoothing > should handle insufficient data gracefully
+{"level":"warn","message":"Insufficient data for Holt-Winters smoothing","event":"ml.holt-warnings","timestamp":"2026-08-19T23:45:03.124Z","metadata":{"dataLength":5,"requiredLength":14}}
+
+stdout | src/lib/ml/transaction-predictor.test.ts > TransactionPredictor Class > Constructor and Initialization > should create instance with default config
+{"level":"info","message":"TransactionPredictor initialized","event":"ml.predictor.init","timestamp":"2026-08-19T23:45:03.128Z","metadata":{"version":"2.1.0","config":{"enableCache":false,"cacheTTL":300000,"defaultHorizon":30,"confidenceLevel":0.95,"minDataPoints":10,"maxDataPoints":365,"enableAnomalyDetection":true,"anomalyThreshold":2.5,"smoothingFactor":0.3,"movingAverageWindow":7,"seasonalityPeriod":7}}}
+
+stdout | src/lib/ml/transaction-predictor.test.ts > TransactionPredictor Class > Constructor and Initialization > should create instance with default config
+{"level":"info","message":"TransactionPredictor initialized","event":"ml.predictor.init","timestamp":"2026-08-19T23:45:03.128Z","metadata":{"version":"2.1.0","config":{"enableCache":true,"cacheTTL":300000,"defaultHorizon":30,"confidenceLevel":0.95,"minDataPoints":30,"maxDataPoints":365,"enableAnomalyDetection":true,"anomalyThreshold":2.5,"smoothingFactor":0.3,"movingAverageWindow":7,"seasonalityPeriod":7}}}
+
+stdout | src/lib/ml/transaction-predictor.test.ts > TransactionPredictor Class > Constructor and Initialization > should accept custom configuration
+{"level":"info","message":"TransactionPredictor initialized","event":"ml.predictor.init","timestamp":"2026-08-19T23:45:03.129Z","metadata":{"version":"2.1.0","config":{"enableCache":false,"cacheTTL":300000,"defaultHorizon":30,"confidenceLevel":0.95,"minDataPoints":10,"maxDataPoints":365,"enableAnomalyDetection":true,"anomalyThreshold":2.5,"smoothingFactor":0.3,"movingAverageWindow":7,"seasonalityPeriod":7}}}
+
+stdout | src/lib/ml/transaction-predictor.test.ts > TransactionPredictor Class > Constructor and Initialization > should accept custom configuration
+{"level":"info","message":"TransactionPredictor initialized","event":"ml.predictor.init","timestamp":"2026-08-19T23:45:03.129Z","metadata":{"version":"2.1.0","config":{"enableCache":true,"cacheTTL":300000,"defaultHorizon":60,"confidenceLevel":0.95,"minDataPoints":30,"maxDataPoints":365,"enableAnomalyDetection":true,"anomalyThreshold":2.5,"smoothingFactor":0.3,"movingAverageWindow":7,"seasonalityPeriod":7}}}
+
+stdout | src/lib/ml/transaction-predictor.test.ts > TransactionPredictor Class > Constructor and Initialization > should initialize model version
+{"level":"info","message":"TransactionPredictor initialized","event":"ml.predictor.init","timestamp":"2026-08-19T23:45:03.130Z","metadata":{"version":"2.1.0","config":{"enableCache":false,"cacheTTL":300000,"defaultHorizon":30,"confidenceLevel":0.95,"minDataPoints":10,"maxDataPoints":365,"enableAnomalyDetection":true,"anomalyThreshold":2.5,"smoothingFactor":0.3,"movingAverageWindow":7,"seasonalityPeriod":7}}}
+
+stdout | src/lib/ml/transaction-predictor.test.ts > TransactionPredictor Class > Constructor and Initialization > should have valid model version structure
+{"level":"info","message":"TransactionPredictor initialized","event":"ml.predictor.init","timestamp":"2026-08-19T23:45:03.130Z","metadata":{"version":"2.1.0","config":{"enableCache":false,"cacheTTL":300000,"defaultHorizon":30,"confidenceLevel":0.95,"minDataPoints":10,"maxDataPoints":365,"enableAnomalyDetection":true,"anomalyThreshold":2.5,"smoothingFactor":0.3,"movingAverageWindow":7,"seasonalityPeriod":7}}}
+
+stdout | src/lib/ml/transaction-predictor.test.ts > TransactionPredictor Class > Configuration Management > should update configuration
+{"level":"info","message":"TransactionPredictor initialized","event":"ml.predictor.init","timestamp":"2026-08-19T23:45:03.130Z","metadata":{"version":"2.1.0","config":{"enableCache":false,"cacheTTL":300000,"defaultHorizon":30,"confidenceLevel":0.95,"minDataPoints":10,"maxDataPoints":365,"enableAnomalyDetection":true,"anomalyThreshold":2.5,"smoothingFactor":0.3,"movingAverageWindow":7,"seasonalityPeriod":7}}}
+
+stdout | src/lib/ml/transaction-predictor.test.ts > TransactionPredictor Class > Configuration Management > should update configuration
+{"level":"info","message":"Configuration updated","event":"ml.predictor.config-update","timestamp":"2026-08-19T23:45:03.131Z","metadata":{"updates":{"defaultHorizon":45}}}
+
+stdout | src/lib/ml/transaction-predictor.test.ts > TransactionPredictor Class > Configuration Management > should merge config updates
+{"level":"info","message":"TransactionPredictor initialized","event":"ml.predictor.init","timestamp":"2026-08-19T23:45:03.131Z","metadata":{"version":"2.1.0","config":{"enableCache":false,"cacheTTL":300000,"defaultHorizon":30,"confidenceLevel":0.95,"minDataPoints":10,"maxDataPoints":365,"enableAnomalyDetection":true,"anomalyThreshold":2.5,"smoothingFactor":0.3,"movingAverageWindow":7,"seasonalityPeriod":7}}}
+
+stdout | src/lib/ml/transaction-predictor.test.ts > TransactionPredictor Class > Configuration Management > should merge config updates
+{"level":"info","message":"Configuration updated","event":"ml.predictor.config-update","timestamp":"2026-08-19T23:45:03.132Z","metadata":{"updates":{"confidenceLevel":0.99}}}
+
+stdout | src/lib/ml/transaction-predictor.test.ts > TransactionPredictor Class > Training Data Loading > should load training data successfully
+{"level":"info","message":"TransactionPredictor initialized","event":"ml.predictor.init","timestamp":"2026-08-19T23:45:03.132Z","metadata":{"version":"2.1.0","config":{"enableCache":false,"cacheTTL":300000,"defaultHorizon":30,"confidenceLevel":0.95,"minDataPoints":10,"maxDataPoints":365,"enableAnomalyDetection":true,"anomalyThreshold":2.5,"smoothingFactor":0.3,"movingAverageWindow":7,"seasonalityPeriod":7}}}
+
+stdout | src/lib/ml/transaction-predictor.test.ts > TransactionPredictor Class > Training Data Loading > should load training data successfully
+{"level":"info","message":"Training data loaded","event":"ml.predictor.data-loaded","timestamp":"2026-08-19T23:45:03.132Z","metadata":{"dataPoints":91,"dateRange":{"from":"2026-05-21T23:45:03.132Z","to":"2026-08-19T23:45:03.132Z"}}}
+
+stdout | src/lib/ml/transaction-predictor.test.ts > TransactionPredictor Class > Training Data Loading > should sort data by timestamp
+{"level":"info","message":"TransactionPredictor initialized","event":"ml.predictor.init","timestamp":"2026-08-19T23:45:03.133Z","metadata":{"version":"2.1.0","config":{"enableCache":false,"cacheTTL":300000,"defaultHorizon":30,"confidenceLevel":0.95,"minDataPoints":10,"maxDataPoints":365,"enableAnomalyDetection":true,"anomalyThreshold":2.5,"smoothingFactor":0.3,"movingAverageWindow":7,"seasonalityPeriod":7}}}
+
+stdout | src/lib/ml/transaction-predictor.test.ts > TransactionPredictor Class > Training Data Loading > should sort data by timestamp
+{"level":"info","message":"Training data loaded","event":"ml.predictor.data-loaded","timestamp":"2026-08-19T23:45:03.133Z","metadata":{"dataPoints":91,"dateRange":{"from":"2026-05-21T23:45:03.133Z","to":"2026-08-19T23:45:03.133Z"}}}
+
+stdout | src/lib/ml/transaction-predictor.test.ts > TransactionPredictor Class > Training Data Loading > should limit data to maxDataPoints
+{"level":"info","message":"TransactionPredictor initialized","event":"ml.predictor.init","timestamp":"2026-08-19T23:45:03.133Z","metadata":{"version":"2.1.0","config":{"enableCache":false,"cacheTTL":300000,"defaultHorizon":30,"confidenceLevel":0.95,"minDataPoints":10,"maxDataPoints":365,"enableAnomalyDetection":true,"anomalyThreshold":2.5,"smoothingFactor":0.3,"movingAverageWindow":7,"seasonalityPeriod":7}}}
+
+stdout | src/lib/ml/transaction-predictor.test.ts > TransactionPredictor Class > Training Data Loading > should limit data to maxDataPoints
+{"level":"info","message":"Training data loaded","event":"ml.predictor.data-loaded","timestamp":"2026-08-19T23:45:03.134Z","metadata":{"dataPoints":365,"dateRange":{"from":"2025-08-20T23:45:03.134Z","to":"2026-08-19T23:45:03.134Z"}}}
+
+stdout | src/lib/ml/transaction-predictor.test.ts > TransactionPredictor Class > Training Data Loading > should throw error for insufficient data
+{"level":"info","message":"TransactionPredictor initialized","event":"ml.predictor.init","timestamp":"2026-08-19T23:45:03.134Z","metadata":{"version":"2.1.0","config":{"enableCache":false,"cacheTTL":300000,"defaultHorizon":30,"confidenceLevel":0.95,"minDataPoints":10,"maxDataPoints":365,"enableAnomalyDetection":true,"anomalyThreshold":2.5,"smoothingFactor":0.3,"movingAverageWindow":7,"seasonalityPeriod":7}}}
+
+stdout | src/lib/ml/transaction-predictor.test.ts > TransactionPredictor Class > Training Data Loading > should update model version timestamps after loading
+{"level":"info","message":"TransactionPredictor initialized","event":"ml.predictor.init","timestamp":"2026-08-19T23:45:03.135Z","metadata":{"version":"2.1.0","config":{"enableCache":false,"cacheTTL":300000,"defaultHorizon":30,"confidenceLevel":0.95,"minDataPoints":10,"maxDataPoints":365,"enableAnomalyDetection":true,"anomalyThreshold":2.5,"smoothingFactor":0.3,"movingAverageWindow":7,"seasonalityPeriod":7}}}
+
+stdout | src/lib/ml/transaction-predictor.test.ts > TransactionPredictor Class > Training Data Loading > should update model version timestamps after loading
+{"level":"info","message":"Training data loaded","event":"ml.predictor.data-loaded","timestamp":"2026-08-19T23:45:03.135Z","metadata":{"dataPoints":91,"dateRange":{"from":"2026-05-21T23:45:03.135Z","to":"2026-08-19T23:45:03.135Z"}}}
+
+stdout | src/lib/ml/transaction-predictor.test.ts > TransactionPredictor Class > Customer Profile Loading > should load customer profiles
+{"level":"info","message":"TransactionPredictor initialized","event":"ml.predictor.init","timestamp":"2026-08-19T23:45:03.135Z","metadata":{"version":"2.1.0","config":{"enableCache":false,"cacheTTL":300000,"defaultHorizon":30,"confidenceLevel":0.95,"minDataPoints":10,"maxDataPoints":365,"enableAnomalyDetection":true,"anomalyThreshold":2.5,"smoothingFactor":0.3,"movingAverageWindow":7,"seasonalityPeriod":7}}}
+
+stdout | src/lib/ml/transaction-predictor.test.ts > TransactionPredictor Class > Customer Profile Loading > should load customer profiles
+{"level":"info","message":"Customer profiles loaded","event":"ml.predictor.profiles-loaded","timestamp":"2026-08-19T23:45:03.136Z","metadata":{"count":5}}
+
+stdout | src/lib/ml/transaction-predictor.test.ts > TransactionPredictor Class > Customer Profile Loading > handle empty profile array
+{"level":"info","message":"TransactionPredictor initialized","event":"ml.predictor.init","timestamp":"2026-08-19T23:45:03.136Z","metadata":{"version":"2.1.0","config":{"enableCache":false,"cacheTTL":300000,"defaultHorizon":30,"confidenceLevel":0.95,"minDataPoints":10,"maxDataPoints":365,"enableAnomalyDetection":true,"anomalyThreshold":2.5,"smoothingFactor":0.3,"movingAverageWindow":7,"seasonalityPeriod":7}}}
+
+stdout | src/lib/ml/transaction-predictor.test.ts > TransactionPredictor Class > Customer Profile Loading > handle empty profile array
+{"level":"info","message":"Customer profiles loaded","event":"ml.predictor.profiles-loaded","timestamp":"2026-08-19T23:45:03.151Z","metadata":{"count":0}}
+
+stdout | src/lib/ml/transaction-predictor.test.ts > TransactionPredictor Class > Cache Management > should clear cache
+{"level":"info","message":"TransactionPredictor initialized","event":"ml.predictor.init","timestamp":"2026-08-19T23:45:03.151Z","metadata":{"version":"2.1.0","config":{"enableCache":false,"cacheTTL":300000,"defaultHorizon":30,"confidenceLevel":0.95,"minDataPoints":10,"maxDataPoints":365,"enableAnomalyDetection":true,"anomalyThreshold":2.5,"smoothingFactor":0.3,"movingAverageWindow":7,"seasonalityPeriod":7}}}
+
+stdout | src/lib/ml/transaction-predictor.test.ts > TransactionPredictor Class > Cache Management > should clear cache
+{"level":"debug","message":"Prediction cache cleared","event":"ml.predictor.cache-cleared","timestamp":"2026-08-19T23:45:03.152Z"}
+
+stdout | src/lib/ml/transaction-predictor.test.ts > TransactionPredictor Class > Cache Management > should reset state completely
+{"level":"info","message":"TransactionPredictor initialized","event":"ml.predictor.init","timestamp":"2026-08-19T23:45:03.152Z","metadata":{"version":"2.1.0","config":{"enableCache":false,"cacheTTL":300000,"defaultHorizon":30,"confidenceLevel":0.95,"minDataPoints":10,"maxDataPoints":365,"enableAnomalyDetection":true,"anomalyThreshold":2.5,"smoothingFactor":0.3,"movingAverageWindow":7,"seasonalityPeriod":7}}}
+
+stdout | src/lib/ml/transaction-predictor.test.ts > TransactionPredictor Class > Cache Management > should reset state completely
+{"level":"info","message":"Training data loaded","event":"ml.predictor.data-loaded","timestamp":"2026-08-19T23:45:03.152Z","metadata":{"dataPoints":91,"dateRange":{"from":"2026-05-21T23:45:03.152Z","to":"2026-08-19T23:45:03.152Z"}}}
+{"level":"info","message":"Customer profiles loaded","event":"ml.predictor.profiles-loaded","timestamp":"2026-08-19T23:45:03.152Z","metadata":{"count":5}}
+{"level":"debug","message":"Prediction cache cleared","event":"ml.predictor.cache-cleared","timestamp":"2026-08-19T23:45:03.152Z"}
+{"level":"info","message":"Predictor reset to initial state","event":"ml.predictor.reset","timestamp":"2026-08-19T23:45:03.152Z"}
+
+stdout | src/lib/ml/transaction-predictor.test.ts > TransactionPredictor Class > Summary Method > should return complete summary
+{"level":"info","message":"TransactionPredictor initialized","event":"ml.predictor.init","timestamp":"2026-08-19T23:45:03.152Z","metadata":{"version":"2.1.0","config":{"enableCache":false,"cacheTTL":300000,"defaultHorizon":30,"confidenceLevel":0.95,"minDataPoints":10,"maxDataPoints":365,"enableAnomalyDetection":true,"anomalyThreshold":2.5,"smoothingFactor":0.3,"movingAverageWindow":7,"seasonalityPeriod":7}}}
+
+stdout | src/lib/ml/transaction-predictor.test.ts > TransactionPredictor Class > Summary Method > should return complete summary
+{"level":"info","message":"Training data loaded","event":"ml.predictor.data-loaded","timestamp":"2026-08-19T23:45:03.153Z","metadata":{"dataPoints":91,"dateRange":{"from":"2026-05-21T23:45:03.152Z","to":"2026-08-19T23:45:03.152Z"}}}
+{"level":"info","message":"Customer profiles loaded","event":"ml.predictor.profiles-loaded","timestamp":"2026-08-19T23:45:03.153Z","metadata":{"count":5}}
+
+stdout | src/lib/ml/transaction-predictor.test.ts > Volume Prediction > should generate volume predictions
+{"level":"info","message":"TransactionPredictor initialized","event":"ml.predictor.init","timestamp":"2026-08-19T23:45:03.153Z","metadata":{"version":"2.1.0","config":{"enableCache":false,"cacheTTL":300000,"defaultHorizon":30,"confidenceLevel":0.95,"minDataPoints":10,"maxDataPoints":365,"enableAnomalyDetection":true,"anomalyThreshold":2.5,"smoothingFactor":0.3,"movingAverageWindow":7,"seasonalityPeriod":7}}}
+{"level":"info","message":"Training data loaded","event":"ml.predictor.data-loaded","timestamp":"2026-08-19T23:45:03.153Z","metadata":{"dataPoints":91,"dateRange":{"from":"2026-05-21T23:45:03.153Z","to":"2026-08-19T23:45:03.153Z"}}}
+
+stdout | src/lib/ml/transaction-predictor.test.ts > Volume Prediction > should generate volume predictions
+{"level":"info","message":"Volume prediction completed","event":"ml.predictor.volume-complete","timestamp":"2026-08-19T23:45:03.154Z","metadata":{"horizon":14,"processingTimeMs":1,"firstPrediction":132,"lastPrediction":177}}
+
+stdout | src/lib/ml/transaction-predictor.test.ts > Volume Prediction > should include confidence bounds
+{"level":"info","message":"TransactionPredictor initialized","event":"ml.predictor.init","timestamp":"2026-08-19T23:45:03.155Z","metadata":{"version":"2.1.0","config":{"enableCache":false,"cacheTTL":300000,"defaultHorizon":30,"confidenceLevel":0.95,"minDataPoints":10,"maxDataPoints":365,"enableAnomalyDetection":true,"anomalyThreshold":2.5,"smoothingFactor":0.3,"movingAverageWindow":7,"seasonalityPeriod":7}}}
+{"level":"info","message":"Training data loaded","event":"ml.predictor.data-loaded","timestamp":"2026-08-19T23:45:03.155Z","metadata":{"dataPoints":91,"dateRange":{"from":"2026-05-21T23:45:03.155Z","to":"2026-08-19T23:45:03.155Z"}}}
+
+stdout | src/lib/ml/transaction-predictor.test.ts > Volume Prediction > should include confidence bounds
+{"level":"info","message":"Volume prediction completed","event":"ml.predictor.volume-complete","timestamp":"2026-08-19T23:45:03.155Z","metadata":{"horizon":7,"processingTimeMs":0,"firstPrediction":130,"lastPrediction":167}}
+
+stdout | src/lib/ml/transaction-predictor.test.ts > Volume Prediction > should have increasing uncertainty over time
+{"level":"info","message":"TransactionPredictor initialized","event":"ml.predictor.init","timestamp":"2026-08-19T23:45:03.156Z","metadata":{"version":"2.1.0","config":{"enableCache":false,"cacheTTL":300000,"defaultHorizon":30,"confidenceLevel":0.95,"minDataPoints":10,"maxDataPoints":365,"enableAnomalyDetection":true,"anomalyThreshold":2.5,"smoothingFactor":0.3,"movingAverageWindow":7,"seasonalityPeriod":7}}}
+{"level":"info","message":"Training data loaded","event":"ml.predictor.data-loaded","timestamp":"2026-08-19T23:45:03.156Z","metadata":{"dataPoints":91,"dateRange":{"from":"2026-05-21T23:45:03.156Z","to":"2026-08-19T23:45:03.156Z"}}}
+
+stdout | src/lib/ml/transaction-predictor.test.ts > Volume Prediction > should have increasing uncertainty over time
+{"level":"info","message":"Volume prediction completed","event":"ml.predictor.volume-complete","timestamp":"2026-08-19T23:45:03.157Z","metadata":{"horizon":30,"processingTimeMs":1,"firstPrediction":128,"lastPrediction":112}}
+
+stdout | src/lib/ml/transaction-predictor.test.ts > Volume Prediction > should include date for each prediction
+{"level":"info","message":"TransactionPredictor initialized","event":"ml.predictor.init","timestamp":"2026-08-19T23:45:03.157Z","metadata":{"version":"2.1.0","config":{"enableCache":false,"cacheTTL":300000,"defaultHorizon":30,"confidenceLevel":0.95,"minDataPoints":10,"maxDataPoints":365,"enableAnomalyDetection":true,"anomalyThreshold":2.5,"smoothingFactor":0.3,"movingAverageWindow":7,"seasonalityPeriod":7}}}
+{"level":"info","message":"Training data loaded","event":"ml.predictor.data-loaded","timestamp":"2026-08-19T23:45:03.157Z","metadata":{"dataPoints":91,"dateRange":{"from":"2026-05-21T23:45:03.157Z","to":"2026-08-19T23:45:03.157Z"}}}
+
+stdout | src/lib/ml/transaction-predictor.test.ts > Volume Prediction > should include date for each prediction
+{"level":"info","message":"Volume prediction completed","event":"ml.predictor.volume-complete","timestamp":"2026-08-19T23:45:03.157Z","metadata":{"horizon":7,"processingTimeMs":0,"firstPrediction":126,"lastPrediction":160}}
+
+stdout | src/lib/ml/transaction-predictor.test.ts > Volume Prediction > should include components breakdown
+{"level":"info","message":"TransactionPredictor initialized","event":"ml.predictor.init","timestamp":"2026-08-19T23:45:03.158Z","metadata":{"version":"2.1.0","config":{"enableCache":false,"cacheTTL":300000,"defaultHorizon":30,"confidenceLevel":0.95,"minDataPoints":10,"maxDataPoints":365,"enableAnomalyDetection":true,"anomalyThreshold":2.5,"smoothingFactor":0.3,"movingAverageWindow":7,"seasonalityPeriod":7}}}
+{"level":"info","message":"Training data loaded","event":"ml.predictor.data-loaded","timestamp":"2026-08-19T23:45:03.158Z","metadata":{"dataPoints":91,"dateRange":{"from":"2026-05-21T23:45:03.158Z","to":"2026-08-19T23:45:03.158Z"}}}
+
+stdout | src/lib/ml/transaction-predictor.test.ts > Volume Prediction > should include components breakdown
+{"level":"info","message":"Volume prediction completed","event":"ml.predictor.volume-complete","timestamp":"2026-08-19T23:45:03.158Z","metadata":{"horizon":7,"processingTimeMs":0,"firstPrediction":127,"lastPrediction":164}}
+
+stdout | src/lib/ml/transaction-predictor.test.ts > Volume Prediction > should use specified horizon
+{"level":"info","message":"TransactionPredictor initialized","event":"ml.predictor.init","timestamp":"2026-08-19T23:45:03.159Z","metadata":{"version":"2.1.0","config":{"enableCache":false,"cacheTTL":300000,"defaultHorizon":30,"confidenceLevel":0.95,"minDataPoints":10,"maxDataPoints":365,"enableAnomalyDetection":true,"anomalyThreshold":2.5,"smoothingFactor":0.3,"movingAverageWindow":7,"seasonalityPeriod":7}}}
+{"level":"info","message":"Training data loaded","event":"ml.predictor.data-loaded","timestamp":"2026-08-19T23:45:03.159Z","metadata":{"dataPoints":91,"dateRange":{"from":"2026-05-21T23:45:03.159Z","to":"2026-08-19T23:45:03.159Z"}}}
+
+stdout | src/lib/ml/transaction-predictor.test.ts > Volume Prediction > should use specified horizon
+{"level":"info","message":"Volume prediction completed","event":"ml.predictor.volume-complete","timestamp":"2026-08-19T23:45:03.159Z","metadata":{"horizon":21,"processingTimeMs":0,"firstPrediction":125,"lastPrediction":160}}
+
+stdout | src/lib/ml/transaction-predictor.test.ts > Volume Prediction > should throw error without training data
+{"level":"info","message":"TransactionPredictor initialized","event":"ml.predictor.init","timestamp":"2026-08-19T23:45:03.159Z","metadata":{"version":"2.1.0","config":{"enableCache":false,"cacheTTL":300000,"defaultHorizon":30,"confidenceLevel":0.95,"minDataPoints":10,"maxDataPoints":365,"enableAnomalyDetection":true,"anomalyThreshold":2.5,"smoothingFactor":0.3,"movingAverageWindow":7,"seasonalityPeriod":7}}}
+{"level":"info","message":"Training data loaded","event":"ml.predictor.data-loaded","timestamp":"2026-08-19T23:45:03.159Z","metadata":{"dataPoints":91,"dateRange":{"from":"2026-05-21T23:45:03.159Z","to":"2026-08-19T23:45:03.159Z"}}}
+
+stdout | src/lib/ml/transaction-predictor.test.ts > Volume Prediction > should throw error without training data
+{"level":"info","message":"TransactionPredictor initialized","event":"ml.predictor.init","timestamp":"2026-08-19T23:45:03.159Z","metadata":{"version":"2.1.0","config":{"enableCache":false,"cacheTTL":300000,"defaultHorizon":30,"confidenceLevel":0.95,"minDataPoints":30,"maxDataPoints":365,"enableAnomalyDetection":true,"anomalyThreshold":2.5,"smoothingFactor":0.3,"movingAverageWindow":7,"seasonalityPeriod":7}}}
+
+stdout | src/lib/ml/transaction-predictor.test.ts > Volume Prediction > should return metrics
+{"level":"info","message":"TransactionPredictor initialized","event":"ml.predictor.init","timestamp":"2026-08-19T23:45:03.160Z","metadata":{"version":"2.1.0","config":{"enableCache":false,"cacheTTL":300000,"defaultHorizon":30,"confidenceLevel":0.95,"minDataPoints":10,"maxDataPoints":365,"enableAnomalyDetection":true,"anomalyThreshold":2.5,"smoothingFactor":0.3,"movingAverageWindow":7,"seasonalityPeriod":7}}}
+{"level":"info","message":"Training data loaded","event":"ml.predictor.data-loaded","timestamp":"2026-08-19T23:45:03.160Z","metadata":{"dataPoints":91,"dateRange":{"from":"2026-05-21T23:45:03.160Z","to":"2026-08-19T23:45:03.160Z"}}}
+
+stdout | src/lib/ml/transaction-predictor.test.ts > Volume Prediction > should return metrics
+{"level":"info","message":"Volume prediction completed","event":"ml.predictor.volume-complete","timestamp":"2026-08-19T23:45:03.161Z","metadata":{"horizon":7,"processingTimeMs":0,"firstPrediction":131,"lastPrediction":162}}
+
+stdout | src/lib/ml/transaction-predictor.test.ts > Churn Prediction > should predict churn for existing customer
+{"level":"info","message":"TransactionPredictor initialized","event":"ml.predictor.init","timestamp":"2026-08-19T23:45:03.173Z","metadata":{"version":"2.1.0","config":{"enableCache":false,"cacheTTL":300000,"defaultHorizon":30,"confidenceLevel":0.95,"minDataPoints":10,"maxDataPoints":365,"enableAnomalyDetection":true,"anomalyThreshold":2.5,"smoothingFactor":0.3,"movingAverageWindow":7,"seasonalityPeriod":7}}}
+{"level":"info","message":"Training data loaded","event":"ml.predictor.data-loaded","timestamp":"2026-08-19T23:45:03.173Z","metadata":{"dataPoints":91,"dateRange":{"from":"2026-05-21T23:45:03.173Z","to":"2026-08-19T23:45:03.173Z"}}}
+{"level":"info","message":"Customer profiles loaded","event":"ml.predictor.profiles-loaded","timestamp":"2026-08-19T23:45:03.173Z","metadata":{"count":5}}
+
+stdout | src/lib/ml/transaction-predictor.test.ts > Churn Prediction > should predict churn for existing customer
+{"level":"info","message":"Churn prediction completed","event":"ml.predictor.churn-complete","timestamp":"2026-08-19T23:45:03.174Z","metadata":{"customerId":"customer-1","churnProbability":0.26894142136999494,"riskLevel":"low","processingTimeMs":1}}
+
+stdout | src/lib/ml/transaction-predictor.test.ts > Churn Prediction > should classify risk level correctly
+{"level":"info","message":"TransactionPredictor initialized","event":"ml.predictor.init","timestamp":"2026-08-19T23:45:03.174Z","metadata":{"version":"2.1.0","config":{"enableCache":false,"cacheTTL":300000,"defaultHorizon":30,"confidenceLevel":0.95,"minDataPoints":10,"maxDataPoints":365,"enableAnomalyDetection":true,"anomalyThreshold":2.5,"smoothingFactor":0.3,"movingAverageWindow":7,"seasonalityPeriod":7}}}
+{"level":"info","message":"Training data loaded","event":"ml.predictor.data-loaded","timestamp":"2026-08-19T23:45:03.174Z","metadata":{"dataPoints":91,"dateRange":{"from":"2026-05-21T23:45:03.174Z","to":"2026-08-19T23:45:03.174Z"}}}
+{"level":"info","message":"Customer profiles loaded","event":"ml.predictor.profiles-loaded","timestamp":"2026-08-19T23:45:03.174Z","metadata":{"count":5}}
+
+stdout | src/lib/ml/transaction-predictor.test.ts > Churn Prediction > should classify risk level correctly
+{"level":"info","message":"Churn prediction completed","event":"ml.predictor.churn-complete","timestamp":"2026-08-19T23:45:03.174Z","metadata":{"customerId":"customer-1","churnProbability":0.26894142136999494,"riskLevel":"low","processingTimeMs":0}}
+
+stdout | src/lib/ml/transaction-predictor.test.ts > Churn Prediction > should include contributing factors
+{"level":"info","message":"TransactionPredictor initialized","event":"ml.predictor.init","timestamp":"2026-08-19T23:45:03.175Z","metadata":{"version":"2.1.0","config":{"enableCache":false,"cacheTTL":300000,"defaultHorizon":30,"confidenceLevel":0.95,"minDataPoints":10,"maxDataPoints":365,"enableAnomalyDetection":true,"anomalyThreshold":2.5,"smoothingFactor":0.3,"movingAverageWindow":7,"seasonalityPeriod":7}}}
+{"level":"info","message":"Training data loaded","event":"ml.predictor.data-loaded","timestamp":"2026-08-19T23:45:03.175Z","metadata":{"dataPoints":91,"dateRange":{"from":"2026-05-21T23:45:03.175Z","to":"2026-08-19T23:45:03.175Z"}}}
+{"level":"info","message":"Customer profiles loaded","event":"ml.predictor.profiles-loaded","timestamp":"2026-08-19T23:45:03.175Z","metadata":{"count":5}}
+
+stdout | src/lib/ml/transaction-predictor.test.ts > Churn Prediction > should include contributing factors
+{"level":"info","message":"Churn prediction completed","event":"ml.predictor.churn-complete","timestamp":"2026-08-19T23:45:03.175Z","metadata":{"customerId":"customer-1","churnProbability":0.26894142136999494,"riskLevel":"low","processingTimeMs":0}}
+
+stdout | src/lib/ml/transaction-predictor.test.ts > Churn Prediction > should provide recommendations
+{"level":"info","message":"TransactionPredictor initialized","event":"ml.predictor.init","timestamp":"2026-08-19T23:45:03.175Z","metadata":{"version":"2.1.0","config":{"enableCache":false,"cacheTTL":300000,"defaultHorizon":30,"confidenceLevel":0.95,"minDataPoints":10,"maxDataPoints":365,"enableAnomalyDetection":true,"anomalyThreshold":2.5,"smoothingFactor":0.3,"movingAverageWindow":7,"seasonalityPeriod":7}}}
+{"level":"info","message":"Training data loaded","event":"ml.predictor.data-loaded","timestamp":"2026-08-19T23:45:03.176Z","metadata":{"dataPoints":91,"dateRange":{"from":"2026-05-21T23:45:03.176Z","to":"2026-08-19T23:45:03.176Z"}}}
+{"level":"info","message":"Customer profiles loaded","event":"ml.predictor.profiles-loaded","timestamp":"2026-08-19T23:45:03.176Z","metadata":{"count":5}}
+
+stdout | src/lib/ml/transaction-predictor.test.ts > Churn Prediction > should provide recommendations
+{"level":"info","message":"Churn prediction completed","event":"ml.predictor.churn-complete","timestamp":"2026-08-19T23:45:03.176Z","metadata":{"customerId":"customer-1","churnProbability":0.26894142136999494,"riskLevel":"low","processingTimeMs":0}}
+
+stdout | src/lib/ml/transaction-predictor.test.ts > Churn Prediction > should estimate days to churn
+{"level":"info","message":"TransactionPredictor initialized","event":"ml.predictor.init","timestamp":"2026-08-19T23:45:03.176Z","metadata":{"version":"2.1.0","config":{"enableCache":false,"cacheTTL":300000,"defaultHorizon":30,"confidenceLevel":0.95,"minDataPoints":10,"maxDataPoints":365,"enableAnomalyDetection":true,"anomalyThreshold":2.5,"smoothingFactor":0.3,"movingAverageWindow":7,"seasonalityPeriod":7}}}
+{"level":"info","message":"Training data loaded","event":"ml.predictor.data-loaded","timestamp":"2026-08-19T23:45:03.176Z","metadata":{"dataPoints":91,"dateRange":{"from":"2026-05-21T23:45:03.176Z","to":"2026-08-19T23:45:03.176Z"}}}
+{"level":"info","message":"Customer profiles loaded","event":"ml.predictor.profiles-loaded","timestamp":"2026-08-19T23:45:03.176Z","metadata":{"count":5}}
+
+stdout | src/lib/ml/transaction-predictor.test.ts > Churn Prediction > should estimate days to churn
+{"level":"info","message":"Churn prediction completed","event":"ml.predictor.churn-complete","timestamp":"2026-08-19T23:45:03.176Z","metadata":{"customerId":"customer-1","churnProbability":0.26894142136999494,"riskLevel":"low","processingTimeMs":0}}
+
+stdout | src/lib/ml/transaction-predictor.test.ts > Churn Prediction > should identify at-risk customers as higher churn probability
+{"level":"info","message":"TransactionPredictor initialized","event":"ml.predictor.init","timestamp":"2026-08-19T23:45:03.177Z","metadata":{"version":"2.1.0","config":{"enableCache":false,"cacheTTL":300000,"defaultHorizon":30,"confidenceLevel":0.95,"minDataPoints":10,"maxDataPoints":365,"enableAnomalyDetection":true,"anomalyThreshold":2.5,"smoothingFactor":0.3,"movingAverageWindow":7,"seasonalityPeriod":7}}}
+{"level":"info","message":"Training data loaded","event":"ml.predictor.data-loaded","timestamp":"2026-08-19T23:45:03.177Z","metadata":{"dataPoints":91,"dateRange":{"from":"2026-05-21T23:45:03.177Z","to":"2026-08-19T23:45:03.177Z"}}}
+{"level":"info","message":"Customer profiles loaded","event":"ml.predictor.profiles-loaded","timestamp":"2026-08-19T23:45:03.177Z","metadata":{"count":5}}
+
+stdout | src/lib/ml/transaction-predictor.test.ts > Churn Prediction > should identify at-risk customers as higher churn probability
+{"level":"info","message":"Churn prediction completed","event":"ml.predictor.churn-complete","timestamp":"2026-08-19T23:45:03.177Z","metadata":{"customerId":"customer-1","churnProbability":0.26894142136999494,"riskLevel":"low","processingTimeMs":0}}
+
+stdout | src/lib/ml/transaction-predictor.test.ts > Churn Prediction > should identify at-risk customers as higher churn probability
+{"level":"info","message":"Churn prediction completed","event":"ml.predictor.churn-complete","timestamp":"2026-08-19T23:45:03.177Z","metadata":{"customerId":"customer-2","churnProbability":0.9975273768433653,"riskLevel":"critical","processingTimeMs":0}}
+
+stdout | src/lib/ml/transaction-predictor.test.ts > Churn Prediction > should throw error for unknown customer
+{"level":"info","message":"TransactionPredictor initialized","event":"ml.predictor.init","timestamp":"2026-08-19T23:45:03.178Z","metadata":{"version":"2.1.0","config":{"enableCache":false,"cacheTTL":300000,"defaultHorizon":30,"confidenceLevel":0.95,"minDataPoints":10,"maxDataPoints":365,"enableAnomalyDetection":true,"anomalyThreshold":2.5,"smoothingFactor":0.3,"movingAverageWindow":7,"seasonalityPeriod":7}}}
+{"level":"info","message":"Training data loaded","event":"ml.predictor.data-loaded","timestamp":"2026-08-19T23:45:03.178Z","metadata":{"dataPoints":91,"dateRange":{"from":"2026-05-21T23:45:03.178Z","to":"2026-08-19T23:45:03.178Z"}}}
+{"level":"info","message":"Customer profiles loaded","event":"ml.predictor.profiles-loaded","timestamp":"2026-08-19T23:45:03.178Z","metadata":{"count":5}}
+
+stdout | src/lib/ml/transaction-predictor.test.ts > Churn Prediction > should batch predict for multiple customers
+{"level":"info","message":"TransactionPredictor initialized","event":"ml.predictor.init","timestamp":"2026-08-19T23:45:03.178Z","metadata":{"version":"2.1.0","config":{"enableCache":false,"cacheTTL":300000,"defaultHorizon":30,"confidenceLevel":0.95,"minDataPoints":10,"maxDataPoints":365,"enableAnomalyDetection":true,"anomalyThreshold":2.5,"smoothingFactor":0.3,"movingAverageWindow":7,"seasonalityPeriod":7}}}
+{"level":"info","message":"Training data loaded","event":"ml.predictor.data-loaded","timestamp":"2026-08-19T23:45:03.178Z","metadata":{"dataPoints":91,"dateRange":{"from":"2026-05-21T23:45:03.178Z","to":"2026-08-19T23:45:03.178Z"}}}
+{"level":"info","message":"Customer profiles loaded","event":"ml.predictor.profiles-loaded","timestamp":"2026-08-19T23:45:03.178Z","metadata":{"count":5}}
+
+stdout | src/lib/ml/transaction-predictor.test.ts > Churn Prediction > should batch predict for multiple customers
+{"level":"info","message":"Starting batch churn prediction","event":"ml.predictor.batch-churn-start","timestamp":"2026-08-19T23:45:03.178Z","metadata":{"count":3}}
+{"level":"info","message":"Churn prediction completed","event":"ml.predictor.churn-complete","timestamp":"2026-08-19T23:45:03.178Z","metadata":{"customerId":"customer-1","churnProbability":0.26894142136999494,"riskLevel":"low","processingTimeMs":0}}
+
+stdout | src/lib/ml/transaction-predictor.test.ts > Churn Prediction > should batch predict for multiple customers
+{"level":"info","message":"Churn prediction completed","event":"ml.predictor.churn-complete","timestamp":"2026-08-19T23:45:03.178Z","metadata":{"customerId":"customer-2","churnProbability":0.9975273768433653,"riskLevel":"critical","processingTimeMs":0}}
+
+stdout | src/lib/ml/transaction-predictor.test.ts > Churn Prediction > should batch predict for multiple customers
+{"level":"info","message":"Churn prediction completed","event":"ml.predictor.churn-complete","timestamp":"2026-08-19T23:45:03.178Z","metadata":{"customerId":"customer-3","churnProbability":0.26894142136999494,"riskLevel":"low","processingTimeMs":0}}
+
+stdout | src/lib/ml/transaction-predictor.test.ts > Churn Prediction > should batch predict for multiple customers
+{"level":"info","message":"Batch churn prediction completed","event":"ml.predictor.batch-churn-complete","timestamp":"2026-08-19T23:45:03.179Z","metadata":{"requested":3,"successful":3,"failed":0}}
+
+stdout | src/lib/ml/transaction-predictor.test.ts > Payment Success Prediction > should predict payment success
+{"level":"info","message":"TransactionPredictor initialized","event":"ml.predictor.init","timestamp":"2026-08-19T23:45:03.179Z","metadata":{"version":"2.1.0","config":{"enableCache":false,"cacheTTL":300000,"defaultHorizon":30,"confidenceLevel":0.95,"minDataPoints":10,"maxDataPoints":365,"enableAnomalyDetection":true,"anomalyThreshold":2.5,"smoothingFactor":0.3,"movingAverageWindow":7,"seasonalityPeriod":7}}}
+{"level":"info","message":"Training data loaded","event":"ml.predictor.data-loaded","timestamp":"2026-08-19T23:45:03.179Z","metadata":{"dataPoints":91,"dateRange":{"from":"2026-05-21T23:45:03.179Z","to":"2026-08-19T23:45:03.179Z"}}}
+{"level":"info","message":"Customer profiles loaded","event":"ml.predictor.profiles-loaded","timestamp":"2026-08-19T23:45:03.179Z","metadata":{"count":5}}
+
+stdout | src/lib/ml/transaction-predictor.test.ts > Payment Success Prediction > should predict payment success
+{"level":"info","message":"Payment success prediction completed","event":"ml.predictor.success-complete","timestamp":"2026-08-19T23:45:03.194Z","metadata":{"successProbability":0.9175274488697523,"riskAssessment":"low","processingTimeMs":15}}
+
+stdout | src/lib/ml/transaction-predictor.test.ts > Payment Success Prediction > should classify risk assessment
+{"level":"info","message":"TransactionPredictor initialized","event":"ml.predictor.init","timestamp":"2026-08-19T23:45:03.195Z","metadata":{"version":"2.1.0","config":{"enableCache":false,"cacheTTL":300000,"defaultHorizon":30,"confidenceLevel":0.95,"minDataPoints":10,"maxDataPoints":365,"enableAnomalyDetection":true,"anomalyThreshold":2.5,"smoothingFactor":0.3,"movingAverageWindow":7,"seasonalityPeriod":7}}}
+{"level":"info","message":"Training data loaded","event":"ml.predictor.data-loaded","timestamp":"2026-08-19T23:45:03.195Z","metadata":{"dataPoints":91,"dateRange":{"from":"2026-05-21T23:45:03.195Z","to":"2026-08-19T23:45:03.195Z"}}}
+{"level":"info","message":"Customer profiles loaded","event":"ml.predictor.profiles-loaded","timestamp":"2026-08-19T23:45:03.195Z","metadata":{"count":5}}
+
+stdout | src/lib/ml/transaction-predictor.test.ts > Payment Success Prediction > should classify risk assessment
+{"level":"info","message":"Payment success prediction completed","event":"ml.predictor.success-complete","timestamp":"2026-08-19T23:45:03.195Z","metadata":{"successProbability":0.9222447804175666,"riskAssessment":"low","processingTimeMs":0}}
+
+stdout | src/lib/ml/transaction-predictor.test.ts > Payment Success Prediction > should include risk indicators
+{"level":"info","message":"TransactionPredictor initialized","event":"ml.predictor.init","timestamp":"2026-08-19T23:45:03.195Z","metadata":{"version":"2.1.0","config":{"enableCache":false,"cacheTTL":300000,"defaultHorizon":30,"confidenceLevel":0.95,"minDataPoints":10,"maxDataPoints":365,"enableAnomalyDetection":true,"anomalyThreshold":2.5,"smoothingFactor":0.3,"movingAverageWindow":7,"seasonalityPeriod":7}}}
+{"level":"info","message":"Training data loaded","event":"ml.predictor.data-loaded","timestamp":"2026-08-19T23:45:03.195Z","metadata":{"dataPoints":91,"dateRange":{"from":"2026-05-21T23:45:03.195Z","to":"2026-08-19T23:45:03.195Z"}}}
+{"level":"info","message":"Customer profiles loaded","event":"ml.predictor.profiles-loaded","timestamp":"2026-08-19T23:45:03.195Z","metadata":{"count":5}}
+
+stdout | src/lib/ml/transaction-predictor.test.ts > Payment Success Prediction > should include risk indicators
+{"level":"info","message":"Payment success prediction completed","event":"ml.predictor.success-complete","timestamp":"2026-08-19T23:45:03.196Z","metadata":{"successProbability":0.9187521367521367,"riskAssessment":"low","processingTimeMs":0}}
+
+stdout | src/lib/ml/transaction-predictor.test.ts > Payment Success Prediction > should estimate processing time
+{"level":"info","message":"TransactionPredictor initialized","event":"ml.predictor.init","timestamp":"2026-08-19T23:45:03.196Z","metadata":{"version":"2.1.0","config":{"enableCache":false,"cacheTTL":300000,"defaultHorizon":30,"confidenceLevel":0.95,"minDataPoints":10,"maxDataPoints":365,"enableAnomalyDetection":true,"anomalyThreshold":2.5,"smoothingFactor":0.3,"movingAverageWindow":7,"seasonalityPeriod":7}}}
+{"level":"info","message":"Training data loaded","event":"ml.predictor.data-loaded","timestamp":"2026-08-19T23:45:03.196Z","metadata":{"dataPoints":91,"dateRange":{"from":"2026-05-21T23:45:03.196Z","to":"2026-08-19T23:45:03.196Z"}}}
+{"level":"info","message":"Customer profiles loaded","event":"ml.predictor.profiles-loaded","timestamp":"2026-08-19T23:45:03.196Z","metadata":{"count":5}}
+
+stdout | src/lib/ml/transaction-predictor.test.ts > Payment Success Prediction > should estimate processing time
+{"level":"info","message":"Payment success prediction completed","event":"ml.predictor.success-complete","timestamp":"2026-08-19T23:45:03.197Z","metadata":{"successProbability":0.9203279627640529,"riskAssessment":"low","processingTimeMs":1}}
+
+stdout | src/lib/ml/transaction-predictor.test.ts > Payment Success Prediction > should provide recommendations for risky payments
+{"level":"info","message":"TransactionPredictor initialized","event":"ml.predictor.init","timestamp":"2026-08-19T23:45:03.197Z","metadata":{"version":"2.1.0","config":{"enableCache":false,"cacheTTL":300000,"defaultHorizon":30,"confidenceLevel":0.95,"minDataPoints":10,"maxDataPoints":365,"enableAnomalyDetection":true,"anomalyThreshold":2.5,"smoothingFactor":0.3,"movingAverageWindow":7,"seasonalityPeriod":7}}}
+{"level":"info","message":"Training data loaded","event":"ml.predictor.data-loaded","timestamp":"2026-08-19T23:45:03.197Z","metadata":{"dataPoints":91,"dateRange":{"from":"2026-05-21T23:45:03.197Z","to":"2026-08-19T23:45:03.197Z"}}}
+{"level":"info","message":"Customer profiles loaded","event":"ml.predictor.profiles-loaded","timestamp":"2026-08-19T23:45:03.197Z","metadata":{"count":5}}
+
+stdout | src/lib/ml/transaction-predictor.test.ts > Payment Success Prediction > should provide recommendations for risky payments
+{"level":"info","message":"Payment success prediction completed","event":"ml.predictor.success-complete","timestamp":"2026-08-19T23:45:03.197Z","metadata":{"successProbability":0.8735764516417643,"riskAssessment":"low","processingTimeMs":0}}
+
+stdout | src/lib/ml/transaction-predictor.test.ts > Payment Success Prediction > should adjust probability based on amount
+{"level":"info","message":"TransactionPredictor initialized","event":"ml.predictor.init","timestamp":"2026-08-19T23:45:03.197Z","metadata":{"version":"2.1.0","config":{"enableCache":false,"cacheTTL":300000,"defaultHorizon":30,"confidenceLevel":0.95,"minDataPoints":10,"maxDataPoints":365,"enableAnomalyDetection":true,"anomalyThreshold":2.5,"smoothingFactor":0.3,"movingAverageWindow":7,"seasonalityPeriod":7}}}
+{"level":"info","message":"Training data loaded","event":"ml.predictor.data-loaded","timestamp":"2026-08-19T23:45:03.197Z","metadata":{"dataPoints":91,"dateRange":{"from":"2026-05-21T23:45:03.197Z","to":"2026-08-19T23:45:03.197Z"}}}
+{"level":"info","message":"Customer profiles loaded","event":"ml.predictor.profiles-loaded","timestamp":"2026-08-19T23:45:03.197Z","metadata":{"count":5}}
+
+stdout | src/lib/ml/transaction-predictor.test.ts > Payment Success Prediction > should adjust probability based on amount
+{"level":"info","message":"Payment success prediction completed","event":"ml.predictor.success-complete","timestamp":"2026-08-19T23:45:03.198Z","metadata":{"successProbability":0.9262205934930282,"riskAssessment":"low","processingTimeMs":1}}
+
+stdout | src/lib/ml/transaction-predictor.test.ts > Payment Success Prediction > should adjust probability based on amount
+{"level":"info","message":"Payment success prediction completed","event":"ml.predictor.success-complete","timestamp":"2026-08-19T23:45:03.198Z","metadata":{"successProbability":0.8812205934930282,"riskAssessment":"low","processingTimeMs":0}}
+
+stdout | src/lib/ml/transaction-predictor.test.ts > Payment Success Prediction > should consider customer history when available
+{"level":"info","message":"TransactionPredictor initialized","event":"ml.predictor.init","timestamp":"2026-08-19T23:45:03.198Z","metadata":{"version":"2.1.0","config":{"enableCache":false,"cacheTTL":300000,"defaultHorizon":30,"confidenceLevel":0.95,"minDataPoints":10,"maxDataPoints":365,"enableAnomalyDetection":true,"anomalyThreshold":2.5,"smoothingFactor":0.3,"movingAverageWindow":7,"seasonalityPeriod":7}}}
+{"level":"info","message":"Training data loaded","event":"ml.predictor.data-loaded","timestamp":"2026-08-19T23:45:03.198Z","metadata":{"dataPoints":91,"dateRange":{"from":"2026-05-21T23:45:03.198Z","to":"2026-08-19T23:45:03.198Z"}}}
+{"level":"info","message":"Customer profiles loaded","event":"ml.predictor.profiles-loaded","timestamp":"2026-08-19T23:45:03.198Z","metadata":{"count":5}}
+
+stdout | src/lib/ml/transaction-predictor.test.ts > Payment Success Prediction > should consider customer history when available
+{"level":"info","message":"Payment success prediction completed","event":"ml.predictor.success-complete","timestamp":"2026-08-19T23:45:03.198Z","metadata":{"successProbability":0.9119309999499273,"riskAssessment":"low","processingTimeMs":0}}
+
+stdout | src/lib/ml/transaction-predictor.test.ts > Payment Success Prediction > should handle different payment methods
+{"level":"info","message":"TransactionPredictor initialized","event":"ml.predictor.init","timestamp":"2026-08-19T23:45:03.198Z","metadata":{"version":"2.1.0","config":{"enableCache":false,"cacheTTL":300000,"defaultHorizon":30,"confidenceLevel":0.95,"minDataPoints":10,"maxDataPoints":365,"enableAnomalyDetection":true,"anomalyThreshold":2.5,"smoothingFactor":0.3,"movingAverageWindow":7,"seasonalityPeriod":7}}}
+{"level":"info","message":"Training data loaded","event":"ml.predictor.data-loaded","timestamp":"2026-08-19T23:45:03.199Z","metadata":{"dataPoints":91,"dateRange":{"from":"2026-05-21T23:45:03.198Z","to":"2026-08-19T23:45:03.198Z"}}}
+{"level":"info","message":"Customer profiles loaded","event":"ml.predictor.profiles-loaded","timestamp":"2026-08-19T23:45:03.199Z","metadata":{"count":5}}
+
+stdout | src/lib/ml/transaction-predictor.test.ts > Payment Success Prediction > should handle different payment methods
+{"level":"info","message":"Payment success prediction completed","event":"ml.predictor.success-complete","timestamp":"2026-08-19T23:45:03.199Z","metadata":{"successProbability":0.9215506419400856,"riskAssessment":"low","processingTimeMs":0}}
+
+stdout | src/lib/ml/transaction-predictor.test.ts > Payment Success Prediction > should handle different payment methods
+{"level":"info","message":"Payment success prediction completed","event":"ml.predictor.success-complete","timestamp":"2026-08-19T23:45:03.199Z","metadata":{"successProbability":0.9175506419400856,"riskAssessment":"low","processingTimeMs":0}}

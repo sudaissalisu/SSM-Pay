@@ -1,0 +1,1064 @@
+     1→/**
+     2→ * Enterprise Analytics Service
+     3→ * Comprehensive analytics tracking, aggregation, and reporting
+     4→ * 
+     5→ * @module services/analytics
+     6→ */
+     7→
+     8→import { logger } from '@/lib/logger';
+     9→import { AppError, ErrorCode } from '@/lib/errors';
+    10→import {
+    11→  ArrayUtils,
+    12→  DateUtils,
+    13→  NumberUtils,
+    14→  ObjectUtils,
+    15→  IdUtils,
+    16→} from '@/utils';
+    17→
+    18→// ============== Type Definitions ==============
+    19→
+    20→export interface AnalyticsEvent {
+    21→  id: string;
+    22→  sessionId: string;
+    23→  userId?: string;
+    24→  deviceId: string;
+    25→  eventType: string;
+    26→  eventCategory: string;
+    27→  properties: Record<string, unknown>;
+    28→  context: EventContext;
+    29→  timestamp: Date;
+    30→  processed: boolean;
+    31→}
+    32→
+    33→export interface EventContext {
+    34→  url: string;
+    35→  path: string;
+    36→  referrer?: string;
+    37→  userAgent: string;
+    38→  ipAddress: string;
+    39→  country?: string;
+    40→  city?: string;
+    41→  region?: string;
+    42→  browser?: string;
+    43→  os?: string;
+    44→  deviceType?: 'desktop' | 'mobile' | 'tablet';
+    45→}
+    46→
+    47→export interface PageViewEvent extends AnalyticsEvent {
+    48→  eventType: 'page_view';
+    49→  page: string;
+    50→  title: string;
+    51→  referrer?: string;
+    52→  duration?: number;
+    53→  scrollDepth?: number;
+    54→}
+    55→
+    56→export interface ClickEvent extends AnalyticsEvent {
+    57→  eventType: 'click';
+    58→  elementId: string;
+    59→  elementType: string;
+    60→  elementText?: string;
+    61→  page: string;
+    62→  href?: string;
+    63→}
+    64→
+    65→export interface FormSubmitEvent extends AnalyticsEvent {
+    66→  eventType: 'form_submit';
+    67→  formId: string;
+    68→  formName: string;
+    69→  formFields: Record<string, unknown>;
+    70→  isValid: boolean;
+    71→  submissionTimeMs: number;
+    72→}
+    73→
+    74→export interface TransactionEvent extends AnalyticsEvent {
+    75→  eventType: 'transaction_initiated' | 'transaction_completed' | 'transaction_failed';
+    76→  transactionRef: string;
+    77→  amount: number;
+    78→  currency: string;
+    79→  paymentMethod: string;
+    80→  status: string;
+    81→  processingTimeMs?: number;
+    82→}
+    83→
+    84→export interface SessionEvent extends AnalyticsEvent {
+    85→  eventType: 'session_start' | 'session_end';
+    86→  sessionId: string;
+    87→  duration?: number;
+    88→  pageCount?: int;
+    89→  eventsTriggered?: int;
+    90→  conversionTracked?: boolean;
+    91→}
+    92→
+    93→export interface ErrorEvent extends AnalyticsEvent {
+    94→  eventType: 'error';
+    95→  errorType: string;
+    96→  errorMessage: string;
+    97→  errorStack?: string;
+    98→  errorId?: string;
+    99→  fatal: boolean;
+   100→  page?: string;
+   101→  componentStack?: string;
+   102→}
+   103→
+   104→export interface CustomEvent extends AnalyticsEvent {
+   105→  eventType: string;
+   106→  eventCategory: string;
+   107→  // Additional custom properties in properties
+   108→}
+   109→
+   110→// ============== Analytics Store ==============
+   111→
+   112→interface AggregatedMetric {
+   113→  name: string;
+   114→  type: 'count' | 'sum' | 'average' | 'min' | 'max' | 'unique_count';
+   115→  value: number;
+   116→  dimensions: Record<string, string>;
+   117→  timeRange: TimeRange;
+   118→}
+   119→
+   120→interface TimeRange {
+   121→  start: Date;
+   122→  end: Date;
+   123→  granularity: 'minute' | 'hour' | 'day' | 'week' | 'month';
+   124→}
+   125→
+   126→interface FunnelStage {
+   127→  stageName: string;
+   128→  count: number;
+   129→  percentage: number;
+   130→  dropOff: number;
+   131→  conversionRate: number;
+   132→  averageTimeToConvert: number; // ms
+   133→}
+   134→
+   135→interface UserCohort {
+   136→  userId: string;
+   137→  firstVisit: Date;
+   138→  lastVisit: Date;
+   139→  visitCount: number;
+   140→  sessionCount: number;
+   141→  pageViews: number;
+   142→  eventsTriggered: number;
+   143→  conversionCount: number;
+   144→  lifetimeValue: number;
+   145→  preferredDevice: string;
+   146→  preferredBrowser: string;
+   147→  country: string;
+   148→  isReturning: boolean;
+   149→  churnRisk: 'low' | 'medium' | 'high';
+   150→  lastActivityDate: Date;
+   151→}
+   152→
+   153→// ============== Main Analytics Class ==============
+   154→
+   155→/**
+   156→ * Enterprise Analytics Service
+   157→ * 
+   158→ * Features:
+   159→ * - Event collection and validation
+   160→ * - Real-time aggregation
+   161→ * - Funnel analysis
+   162→ * - Cohort analysis
+   163→ * - Session tracking
+   164→ * - User journey mapping
+   165→ * - Conversion attribution
+   166→ * - Custom dashboards
+   167→ */
+   168→export class AnalyticsService {
+   169→  private events: Map<string, AnalyticsEvent[]> = new Map();
+   170→  private sessions: Map<string, SessionData> = new Map();
+   171→  private users: Map<string, UserData> = new Map();
+   172→  
+   173→  // In-memory stores for real-time analytics
+   174→  private realtimeMetrics: Map<string, MetricPoint[]> = new Map();
+   175→  private funnels: Map<string, FunnelData> = new Map();
+   176→
+   177→  constructor(
+   178→    private options: {
+   179→      flushIntervalMs?: number;
+   180→      maxEventsInMemory?: number;
+   181→      maxSessionsInMemory?: number;
+   182→      enableRealtime?: boolean;
+   183→    } = {}
+   184→  ) {
+   185→    logger.info('AnalyticsService initialized', { event: 'analytics.init' });
+   186→    
+   187→    // Start periodic flushing if configured
+   188→    if (options.flushIntervalMs) {
+   189→      setInterval(() => this.flush(), options.flushIntervalMs);
+   190→    }
+   191→  }
+   192→
+   193→  // ============== Event Collection ==============
+   194→
+   195→  /**
+   196→   * Track a page view event
+   197→   */
+   198→  async trackPageView(data: Omit<PageViewEvent, 'id' | 'timestamp' | 'eventType' | 'processed'>): Promise<string> {
+   199→    const event: PageViewEvent = {
+   200→      ...data,
+   201→      id: IdUtils.shortId(),
+   202→      eventType: 'page_view',
+   203→      eventCategory: 'engagement',
+   204→      timestamp: new Date(),
+   205→      processed: false,
+   206→    };
+   207→
+   208→    return this.track(event);
+   209→  }
+   210→
+   211→  /**
+   212→   * Track a click event
+   213→   */
+   214→  async trackClick(data: Omit<ClickEvent, 'id' | 'timestamp' | 'eventType' | 'processed'>): Promise<string> {
+   215→    const event: ClickEvent = {
+   216→      ...data,
+   217→      id: IdUtils.shortId(),
+   218→      'eventType': 'click',
+   219→      eventCategory: 'engagement',
+   220→      timestamp: new Date(),
+   221→      processed: false,
+   222→    };
+   223→
+   224→    return this.track(event);
+   225→  }
+   226→
+   227→  /**
+   228→   * Track a form submission event
+   229→   */
+   230→  async trackFormSubmit(data: Omit<FormSubmitEvent, 'id' | 'timestamp' | 'eventType' | 'processed'>): Promise<string> {
+   231→    const event: FormSubmitEvent = {
+   232→      ...data,
+   233→      id: IdUtils.shortId(),
+   234→      'eventType': 'form_submit',
+   235→      eventCategory: 'engagement',
+   236→      timestamp: new Date(),
+   237→      processed: false,
+   238→    };
+   239→
+   240→    return this.track(event);
+   241→  }
+   242→
+   243→  /**
+   244→   * Track a transaction-related event
+   245→   */
+   246→  async trackTransaction(data: Omit<TransactionEvent, 'id' | 'timestamp' | 'eventType' | 'processed'>): Promise<string> {
+   247→    const event: TransactionEvent = {
+   248→      ...data,
+   249→      id: IdUtils.shortId(),
+   250→      eventType: data.eventType || 'transaction_initiated',
+   251→      eventCategory: 'payment',
+   252→      timestamp: new Date(),
+   253→      processed: false,
+   254→    };
+   255→
+   256→    return this.track(event);
+   257→  }
+   258→
+   259→  /**
+   260→   * Track an error event
+   261→   */
+   262→  async trackError(data: Omit<ErrorEvent, 'id' | 'timestamp' | 'eventType' | 'processed'>): Promise<string> {
+   263→    const event: ErrorEvent = {
+   264→      ...data,
+   265→      id: IdUtils.shortId(),
+   266→      'eventType': 'error',
+   267→      eventCategory: 'system',
+   268→      timestamp: new Date(),
+   269→      processed: false,
+   270→    };
+   271→
+   272→    return this.track(event);
+   273→  }
+   274→
+   275→  /**
+   276→   * Track a custom/event
+   277→   */
+   278→  async track(data: Omit<CustomEvent, 'id' | 'timestamp' | 'processed'>): Promise<string> {
+   279→    const event: CustomEvent = {
+   280→      ...data,
+   281→      id: IdUtils.shortId(),
+   282→      timestamp: new Date(),
+   283→      processed: false,
+   284→    };
+   285→
+   286→    return this.track(event as AnalyticsEvent);
+   287→  }
+   288→
+   289→  /**
+   290→   * Generic event tracking method
+   291→   */
+   292→  async track(event: AnalyticsEvent): Promise<string> {
+   293→    try {
+   294→      // Validate required fields
+   295→      if (!event.sessionId) {
+   296→        throw new AppError('sessionId is required for all events', ErrorCode.VALIDATION_ERROR);
+   297→      }
+   298→
+   299→      if (!event.deviceId) {
+   300→        throw new AppError('deviceId is required for all events', ErrorCode.VALIDATION_ERROR);
+   301→      }
+   302→
+   303→      // Enrich context if not provided
+   304→      if (!event.context) {
+   305→        event.context = this.getDefaultContext();
+   306→      }
+   307→
+   308→      // Store event
+   309→      const sessionKey = event.sessionId;
+   310→      if (!this.events.has(sessionKey)) {
+   311→        this.events.set(sessionKey, []);
+   312→      }
+   313→      
+   314→      this.events.get(sessionKey)!.push(event);
+   315→
+   316→      // Update session
+   317→      this.updateSession(event);
+   318→
+   319→      // Update user data if userId present
+   320→      if (event.userId) {
+   321→        this.updateUser(event.userId, event);
+   322→
+   323→        // Update funnel data for transaction events
+   324→        if (event.eventCategory === 'payment') {
+   325→          this.updateFunnel(event as TransactionEvent);
+   326→        }
+   327→      }
+   328→
+   329→      // Add to realtime metrics
+   330→      this.addToRealtimeMetrics(event);
+   331→
+   332→      event.processed = true;
+   333→
+   334→      logger.debug('Event tracked', {
+   335→        event: 'analytics.event.tracked',
+   336→        metadata: { eventId: event.id, type: event.eventType },
+   337→      });
+   338→
+   339→      return event.id;
+   340→    } catch (error) {
+   341→      logger.error('Failed to track event', {
+   342→        event: 'analytics.error',
+   343→        metadata: { error: String(error), eventData: JSON.stringify(data).slice(0, 100) },
+   344→      });
+   345→      
+   346→      throw error;
+   347→    }
+   348→  }
+   349→
+   350→  // ============== Session Management ==============
+   351→
+   352→  private updateSession(event: AnalyticsEvent): void {
+   353→    const sessionKey = event.sessionId;
+   354→    
+   355→    let session = this.sessions.get(sessionKey);
+   356→    
+   357→    if (!session) {
+   358→      session = {
+   359→        sessionId: sessionKey,
+   360→        userId: event.userId,
+   361→        deviceId: event.deviceId,
+   362→        createdAt: new Date(),
+   363→        lastActivityAt: new Date(),
+   364→        pageViews: 0,
+   365→        eventsTriggered: 0,
+   366→        conversionTracked: false,
+   367→        referrer: event.context?.referrer,
+   368→        landingPage: event.context?.path,
+   369→        exitPage: event.context?.path,
+   370→        entryPage: event.context?.path,
+   371→        utmSource: event.context?.utmSource,
+   372→        utmMedium: event.context?.utmMedium,
+   373→        utmCampaign: event.context?.utmCampaign,
+   374→        utmContent: event.context?.utmContent,
+   375→        utmTerm: event.context?.utmTerm,
+   376→        browser: event.context?.browser,
+   377→        os: event.context?.os,
+   378→        deviceType: event.context?.deviceType,
+   379→        country: event.context?.country,
+   380→        ip: event.context?.ipAddress,
+   381→        isNewSession: true,
+   382→      };
+   383→      
+   384→      this.sessions.set(sessionKey, session);
+   385→    } else {
+   386→      session.lastActivityAt = new Date();
+   387→      session.pageViews++;
+   388→      session.eventsTriggered++;
+   389→      session.exitPage = event.context?.path;
+   390→      
+   391→      if (event.eventType === 'session_end') {
+   392→        const duration = Date.now() - session.createdAt.getTime();
+   393→        session.duration = duration;
+   394→        session.conversionTracked = session.eventsTriggered > 0;
+   395→      }
+   396→      
+   397→      this.sessions.set(sessionKey, session);
+   398→    }
+   399→  }
+   400→
+   401→  /**
+   402→   * Get or create session
+   403→   */
+   404→  getSession(sessionId: string): SessionData | undefined {
+   405→    return this.sessions.get(sessionId);
+   406→  }
+   407→
+   408→  /**
+   409→   * End a session
+   410→   */
+   411→  async endSession(sessionId: string): Promise<void> {
+   412→    await this.track({
+   413→      eventType: 'session_end',
+   414→      sessionId,
+   415→      deviceId: '',
+   416→      data: {},
+   417→    });
+   418→  }
+   419→
+   420→  // ============== User Management ==============
+   421→
+   422→  private updateUser(userId: string, event: AnalyticsEvent): void {
+   423→    let user = this.users.get(userId);
+   424→    
+   425→    if (!user) {
+   426→      user = {
+   427→        userId,
+   428→        firstVisit: new Date(),
+   429→        lastVisit: new Date(),
+   430→        visitCount: 1,
+   431→        sessionCount: 1,
+   432→        pageViews: 0,
+   433→        eventsTriggered: 1,
+   434→        conversionCount: 0,
+   435→        lifetimeValue: 0,
+   436→        preferredDevice: event.context?.deviceType || 'desktop',
+   437→        preferredBrowser: event.context?.browser || 'unknown',
+   438→        country: event.context?.country || 'NG',
+   439→        isReturning: false,
+   440→        churnRisk: 'low' as const,
+   441→        lastActivityDate: new Date(),
+   442→      };
+   443→      
+   444→      this.users.set(userId, user);
+   445→    } else {
+   446→      user.lastVisit = new Date();
+   447→      user.visitCount++;
+   448→      user.sessionCount += event.eventType === 'session_start' ? 1 : 0;
+   449→      user.pageViews += event.eventType === 'page_view' ? 1 : 0;
+   450→      user.eventsTriggered++;
+   451→      user.lifetimeValue += this.calculateLifetimeValue(user);
+   452→      user.isReturning = user.visitCount > 1;
+   453→      
+   454→      // Update device/browser preferences
+   455→      if (event.context?.deviceType && event.context.deviceType !== 'unknown') {
+   456→        user.preferredDevice = event.context.deviceType;
+   457→      }
+   458→      if (event.context?.browser && event.context.browser !== 'unknown') {
+   459→        user.preferredBrowser = event.context.browser;
+   460→      }
+   461→      
+   462→      // Calculate churn risk
+   463→      const daysSinceLastVisit = DateUtils.diffInDays(user.lastVisit, new Date());
+   464→      const daysSinceFirstVisit = DateUtils.diffInDays(user.firstVisit, new Date());
+   465→      
+   466→      if (daysSinceLastVisit > 30 && user.visitCount <= 3) {
+   467→        user.churnRisk = 'high';
+   468→      } else if (daysSinceLastVisit > 14 && user.visitCount <= 5) {
+   469→        user.churnRisk = 'medium';
+   470→      } else if (user.churnRisk !== 'high') {
+   471→        user.churnRisk = 'low';
+   472→      }
+   473→      
+   474→      user.lastActivityDate = new Date();
+   475→      
+   476→      this.users.set(userId, user);
+   477→    }
+   478→  }
+   479→
+   480→  private calculateLifetimeValue(user: UserData): number {
+   481→    // Simple LTV calculation based on engagement
+   482→    const recencyFactor = Math.max(1, 30 - DateUtils.diffInDays(user.firstVisit, new Date())) / 30;
+   483→    const frequencyFactor = Math.min(10, user.visitCount / 10);
+   484→    const depthFactor = Math.min(1, user.eventsTriggered / 50);
+   485→    const conversionBonus = user.conversionCount > 0 ? 2 : 1;
+   486→    
+   487→    return recencyFactor * frequencyFactor * depthFactor * conversionBonus;
+   488→  }
+   489→
+   490→  getUser(userId: string): UserData | undefined {
+   491→    return this.users.get(userId);
+   492→  }
+   493→
+   494→  // ============== Funnel Analysis ==============
+   495→
+   496→  private updateFunnel(event: TransactionEvent): void {
+   497→    const funnelKey = `${event.eventType}_${event.currency || 'NGN'}`;
+   498→    
+   499→    let funnel = this.funnels.get(funnelKey);
+   500→    
+   501→    if (!funnel) {
+   502→      funnel = {
+   503→        name: event.eventType,
+   504→        stages: [
+   505→          { stageName: 'initiated', count: 0, percentage: 100, dropOff: 0, conversionRate: 0, averageTimeToConvert: 0 },
+   506→          { stageName: 'processing', count: 0, percentage: 0, dropOff: 0, conversionRate: 0, averageTimeToConvert: 0 },
+   507→          { stageName: 'completed', count: 0, percentage: 0, dropOff: 0, conversionRate: 0, averageTimeToConvert: 0 },
+   508→          { stageName: 'failed', count: 0, percentage: 0, dropOff: 0, conversionRate: 0, averageTimeToConvert: 0 },
+   509→        ],
+   510→        totalEntries: 0,
+   511→        conversions: 0,
+   512→        totalRevenue: 0,
+   513→        currency: event.currency || 'NGN',
+   514→        startDate: new Date(),
+   515→        lastUpdated: new Date(),
+   516→      };
+   517→      
+   518→      this.funnels.set(funnelKey, funnel);
+   519→      funnel = this.funnels.get(funnelKey)!;
+   520→    }
+   521→
+   522→    // Find current stage and increment
+   523→    const currentStageIndex = funnel.stages.findIndex(s => s.stageName === event.status);
+   524→    
+   525→    if (currentStageIndex >= 0) {
+   526→      funnel.stages[currentStageIndex].count++;
+   527→      funnel.totalEntries++;
+   528→      
+   529→      if (event.status === 'completed') {
+   530→        funnel.conversions++;
+   531→        funnel.totalRevenue += event.amount || 0;
+   532→      }
+   533→    }
+   534→    
+   535→    funnel.lastUpdated = new Date();
+   536→    this.funnels.set(funnelKey, funnel);
+   537→  }
+   538→
+   539→  getFunnel(eventType?: string, currency?: string): FunnelData | undefined {
+   540→    const key = `${eventType || 'payment'}_${currency || 'NGN'}`;
+   541→    return this.funnels.get(key);
+   542→  }
+   543→
+   544→  getAllFunnels(): FunnelData[] {
+   545→    return Array.from(this.funnels.values());
+   546→  }
+   547→
+   548→  // ============== Real-time Metrics ==============
+   549→
+   550→  private addToRealtimeMetrics(event: AnalyticsEvent): void {
+   551→    const metricKey = `${event.eventCategory}:${event.eventType}`;
+   552→    
+   553→    if (!this.realtimeMetrics.has(metricKey)) {
+   554→      this.realtimeMetrics.set(metricKey, []);
+   555→    }
+   556→    
+   557→    const point: MetricPoint = {
+   558→      timestamp: event.timestamp,
+   559→      value: 1, // Count
+   560→      tags: {
+   561→        eventType: event.eventType,
+   562→        category: event.eventCategory,
+   563→        userId: event.userId || 'anonymous',
+   564→        sessionId: event.sessionId,
+   565→        deviceId: event.deviceId,
+   566→        country: event.context?.country,
+   567→        path: event.context?.path,
+   568→      },
+   569→    };
+   570→
+   571→    this.realtimeMetrics.get(metricKey)!.push(point);
+   572→  }
+   573→
+   574→  /**
+   575→   * Get real-time metrics for the last N minutes
+   576→   */
+   577→  getRealtimeMetrics(
+   578→    minutes: number = 60,
+   579→    filters?: { eventType?: string; category?: string }
+   580→  ): MetricPoint[] {
+   581→    const cutoff = new Date(Date.now() - minutes * 60 * 1000);
+   582→    const points: MetricPoint[] = [];
+   583→
+   584→    for (const [, points] of this.realtimeMetrics) {
+   585→      const recentPoints = points.filter(p => p.timestamp >= cutoff);
+   586→      
+   587→      if (filters?.eventType) {
+   588→        recentPoints = recentPoints.filter(p => p.tags.eventType === filters.eventType);
+   589→      }
+   590→      if (filters?.category) {
+   591→        recentPoints = recentPoints.filter(p => p.tags.category === filters.category);
+   592→      }
+   593→      
+   594→      points.push(...recentPoints);
+   595→    }
+   596→
+   597→    return points.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
+   598→  }
+   599→
+   600→  /**
+   601→   * Get aggregated metrics
+   602→   */
+   603→  getAggregatedMetrics(
+   604→    startTime: Date,
+   605→    endTime: Date,
+   606→    granularity: 'minute' | 'hour' | 'day' = 'hour'
+   607→  ): AggregatedMetric[] {
+   608→    const metrics: AggregatedMetric[] = [];
+   609→    
+   610→    for (const [, points] of this.realtimeMetrics) {
+   611→      const filteredPoints = points.filter(
+   612→        p => p.timestamp >= startTime && p.timestamp <= endTime
+   613→      );
+   614→      
+   615→      if (filteredPoints.length === 0) continue;
+   616→      
+   617→      // Group by time period
+   618→      const grouped = this.groupByTimePeriod(filteredPoints, granularity);
+   619→      
+   620→      for (const [period, periodPoints] of Object.entries(grouped)) {
+   621→        metrics.push({
+   622→          name: `events_${periodPoints[0].tags.eventType}`,
+   623→          type: 'count',
+   624→          value: periodPoints.length,
+   625→          dimensions: {
+   626→            eventType: periodPoints[0].tags.eventType,
+   627→            category: periodPoints[0].tags.category,
+   628→            period,
+   629→          },
+   630→          timeRange: { start: startTime, end: endTime },
+   631→        });
+   632→      }
+   633→    }
+   634→
+   635→    return metrics;
+   636→  }
+   637→
+   638→  private groupByTimePeriod(
+   639→    points: MetricPoint[],
+   640→    granularity: 'minute' | 'hour' | 'day'
+   641→  ): Map<string, MetricPoint[]> {
+   642→    const groups = new Map<string, MetricPoint[]>();
+   643→    
+   644→    for (const point of points) {
+   645→      const key = this.getTimePeriodKey(point.timestamp, granularity);
+   646→      
+   647→      if (!groups.has(key)) {
+   648→        groups.set(key, []);
+   649→      }
+   650→      
+   651→      groups.get(key)!.push(point);
+   652→    }
+   653→    
+   654→    return groups;
+   655→  }
+   656→
+   657→  private getTimePeriodKey(date: Date, granularity: string): string {
+   658→    const d = new Date(date);
+   659→    
+   660→    switch (granularity) {
+   661→      case 'minute':
+   662→        return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${d.getDate().toString().padStart(2, '0')}T${d.getHours().toString().padStart(2, '0')}`;
+   663→      case 'hour':
+   664→        return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${d.getDate().toString().padStart(2, '0')}H${d.getHours().toString().padStart(2, '0')}`;
+   665→      case 'day':
+   666→        return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${d.getDate().toString().padStart(2, '0')}`;
+   667→      default:
+   668→        return date.toISOString();
+   669→    }
+   670→  }
+   671→
+   672→  // ============== Query Methods ==============
+   673→
+   674→  /**
+   675→   * Query events with optional filters
+   676→   */
+   677→  query(options: {
+   678→    eventType?: string | string[];
+   679→    eventCategory?: string | string[];
+   680→    userId?: string;
+   681→    sessionId?: string;
+   682→    startDate?: Date;
+   683→    endDate?: Date;
+   684→    limit?: number;
+   685→    offset?: number;
+   686→  }): AnalyticsEvent[] {
+   687→    let events: AnalyticsEvent[] = [];
+   688→
+   689→    for (const [, sessionEvents] of this.events) {
+   690→      let filtered = [...sessionEvents];
+   691→      
+   692→      if (options.eventType) {
+   693→        const types = Array.isArray(options.eventType) ? options.eventType : [options.eventType];
+   694→        filtered = filtered.filter(e => types.includes(e.eventType));
+   695→      }
+   696→      
+   697→      if (options.eventCategory) {
+   698→        const categories = Array.isArray(options.eventCategory) ? options.eventCategory : [options.eventCategory];
+   699→        filtered = filtered.filter(e => categories.includes(e.eventCategory));
+   700→      }
+   701→      
+   702→      if (options.userId) {
+   703→        filtered = filtered.filter(e => e.userId === options.userId);
+   704→      }
+   705→      
+   706→      if (options.sessionId) {
+   707→        filtered = fitered.filter(e => e.sessionId === options.sessionId);
+   708→      }
+   709→      
+   710→      if (options.startDate) {
+   711→        filtered = filtered.filter(e => e.timestamp >= options.startDate);
+   712→      }
+   713→      
+   714→      if (options.endDate) {
+   715→        filtered = filtered.filter(e => e.timestamp <= options.endDate);
+   716→      }
+   717→      
+   718→      events.push(...filtered);
+   719→    }
+   720→
+   721→    // Sort by timestamp descending
+   722→    events.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
+   723→
+   724→    // Apply pagination
+   725→    if (options.offset) {
+   726→      events = events.slice(options.offset);
+   727→    }
+   728→    
+   729→    if (options.limit) {
+   730→      events = events.slice(0, options.limit);
+   731→    }
+   732→
+   733→    return events;
+   734→  }
+   735→
+   736→  /**
+   737→   * Get unique users count
+   738→   */
+   739→  getUniqueUsers(startDate?: Date, endDate?: Date): number {
+   740→    const users = new Set<string>();
+   741→    
+   742→    for (const [, sessionEvents] of this.events) {
+   743→      for (const event of sessionEvents) {
+   744→        if (event.userId && startDate && event.timestamp >= startDate) {
+   745→          if (!endDate || event.timestamp <= endDate) {
+   746→            users.add(event.userId);
+   747→          }
+   748→        }
+   749→      }
+   750→    }
+   751→    
+   752→    return users.size;
+   753→  }
+   754→
+   755→  /**
+   756→   * Get page views count
+   757→   */
+   758→  getPageViews(startDate?: Date, endDate?: Date): number {
+   759→    let count = 0;
+   760→    
+   761→    for (const [, sessionEvents] of this.events) {
+   762→      for (const event of sessionEvents) {
+   763→        if (event.eventType === 'page_view') {
+   764→          if (startDate && event.timestamp >= startDate) {
+   765→            if (!endDate || event.timestamp <= endDate) {
+   766→              count++;
+   767→            }
+   768→          }
+   769→        }
+   770→      }
+   771→    }
+   772→    
+   773→    return count;
+   774→  }
+   775→
+   776→  /**
+   777→   * Get conversion rate
+   778→   */
+   779→  getConversionRate(startDate?: Date, endDate?: Date): number {
+   780→    const totalTransactions = this.query({
+   781→      eventType: ['transaction_initiated'],
+   782→      startDate,
+   783→      endDate,
+   784→    }).length;
+   785→    
+   786→    const completedTransactions = this.query({
+   787→      eventType: ['transaction_completed'],
+   788→      startDate,
+   789→      endDate,
+   790→    }).length;
+   791→    
+   792→    return totalTransactions > 0 ? (completedTransactions / totalTransactions) * 100 : 0;
+   793→  }
+   794→
+   795→  /**
+   796→   * Get popular pages
+   797→   */
+   798→  getPopularPages(limit: number = 10): Array<{ page: string; views: number }> {
+   799→    const pageCounts = new Map<string, number>();
+   800→    
+   801→    for (const [, sessionEvents] of this.events) {
+   802→      for (const event of sessionEvents) {
+   803→        if (event.eventType === 'page_view' && event.context?.path) {
+   804→          const page = event.context.path;
+   805→          pageCounts.set(page, (pageCounts.get(page) || 0) + 1);
+   806→        }
+   807→      }
+   808→    }
+   809→    
+   810→    return Array.from(pageCounts.entries())
+   811→      .sort(([, a], [, b]) => b - a)
+   812→      .slice(0, limit)
+   813→      .map(([page, views]) => ({ page, views }));
+   814→  }
+   815→
+   816→  /**
+   817→   * Get active sessions count
+   818→   */
+   819→  getActiveSessions(windowMinutes: number = 30): number {
+   820→    const cutoff = new Date(Date.now() - windowMinutes * 60 * 1000);
+   821→    let count = 0;
+   822→    
+   823→    for (const [, session] of this.sessions) {
+   824→      if (session.lastActivityAt >= cutoff) {
+   825→        count++;
+   826→      }
+   827→    }
+   828→    
+   829→    return count;
+   830→  }
+   831→
+   832→  // ============== Data Export ==============
+   833→
+   834→  /**
+   835→   * Export events to CSV format
+   836→   */
+   837→  exportToCsv(events?: AnalyticsEvent[]): string {
+   838→    const eventsToExport = events || Array.from(this.events.values()).flat();
+   839→    
+   840→    if (eventsToExport.length === 0) return '';
+   841→    
+   842→    const headers = [
+   843→      'id',
+   844→      'sessionId',
+   845→      'userId',
+   846→      'deviceId',
+   847→      'eventType',
+   848→      'eventCategory',
+   849→      'timestamp',
+   850→      'url',
+   851→      'path',
+   852→      'ipAddress',
+   853→      'country',
+   854→      'browser',
+   855→      'os',
+   856→      'deviceType',
+   857→      'properties',
+   858→    ];
+   859→    
+   860→    const csvRows = eventsToExport.map(event => [
+   861→      event.id,
+   862→      event.sessionId,
+   863→      event.userId || '',
+   864→      event.deviceId,
+   865→      event.eventType,
+   866→      event.eventCategory,
+   867→      event.timestamp.toISOString(),
+   868→      event.context?.url || '',
+   869→      event.context?.path || '',
+   870→      event.context?.ipAddress || '',
+   871→      event.context?.country || '',
+   872→      event.context?.browser || '',
+   873→      event.context?.os || '',
+   874→      event.context?.deviceType || '',
+   875→      `"${JSON.stringify(event.properties).replace(/"/g, '')}"`,
+   876→    ]);
+   877→    
+   878→    return [headers.join(','), ...csvRows].map(row => row.join(',')).join('\n');
+   879→  }
+   880→
+   881→  /**
+   882→   * Export events to JSON format
+   883→   */
+   884→  exportToJson(events?: AnalyticsEvent[]): string {
+   885→    const eventsToExport = events || Array.from(this.events.values()).flat();
+   886→    return JSON.stringify(eventsToExport, null, 2);
+   887→  }
+   888→
+   889→  /**
+   890→   * Flush events to persistent storage
+   891→   */
+   892→  async flush(): Promise<{ eventsFlushed: number; errors: number }> {
+   893→    let eventsFlushed = 0;
+   894→    let errors = 0;
+   895→
+   896→    for (const [sessionId, events] of this.events) {
+   897→      for (const event of events) {
+   898→        if (event.processed) continue;
+   899→
+   900→        try {
+   901→          // In production, this would send to analytics backend
+   902→          // For now, we just mark as processed
+   903→          event.processed = true;
+   904→          eventsFlushed++;
+   905→
+   906→          // Remove old sessions
+   907→          if (this.sessions.has(sessionId)) {
+   908→            const session = this.sessions.get(sessionId)!;
+   909→            const ageInHours = DateUtils.diffInHours(session.createdAt, new Date());
+   910→            if (ageInHours > 48) {
+   911→              this.sessions.delete(sessionId);
+   912→              this.events.delete(sessionId);
+   913→            }
+   914→          }
+   915→        } catch (error) {
+   916→          errors++;
+   917→          logger.error('Error flushing event', {
+   918→            event: 'analytics.flush.error',
+   919→            metadata: { eventId: event.id, error: String(error) },
+   920→          });
+   921→        }
+   922→      }
+   923→    }
+   924→
+   925→    // Clean up old data periodically
+   926→    this.cleanupOldData();
+   927→
+   928→    logger.info('Analytics flushed', {
+   929→      event: 'analytics.flush.complete',
+   930→      metadata: { eventsFlushed, errors },
+   931→    });
+   932→
+   933→    return { eventsFlushed, errors };
+   934→  }
+   935→
+   936→  /**
+   937→   * Clean up old data from memory
+   938→   */
+   939→  private cleanupOldData(): void {
+   940→    const maxAge = 7 * 24 * 60 * 60 * 1000; // 7 days in ms
+   941→    const now = Date.now();
+   942→    
+   943→    // Clean old sessions
+   944→    for (const [sessionId, session] of this.sessions) {
+   945→      if (now - session.createdAt.getTime() > maxAge) {
+   946→        this.sessions.delete(sessionId);
+   947→        this.events.delete(sessionId);
+   948→      }
+   949→    }
+   950→    
+   951→    // Clean old users (keep returning users)
+   952→    const userMaxAge = 90 * 24 * 60 * 60 * 1000; // 90 days
+   953→    for (const [userId, user] of this.users) {
+   954→      if (now - user.firstVisit.getTime() > userMaxAge && user.churnRisk === 'high') {
+   955→        this.users.delete(userId);
+   956→      }
+   957→    }
+   958→    
+   959→    // Keep only last day of realtime metrics
+   960→    const metricsMaxAge = 24 * 60 * 60 * 1000;
+   961→    for (const [key, points] of this.realtimeMetrics) {
+   962→      const oldestPoint = points.reduce((oldest, p) => 
+   963→        oldest.timestamp.getTime()
+   964→      , points[0]);
+   965→      
+   966→      if (now - oldestPoint.getTime() > metricsMaxAge) {
+   967→        this.realtimeMetrics.delete(key);
+   968→      }
+   969→    }
+   970→  }
+   971→
+   972→  /**
+   973→   * Destroy service and cleanup resources
+   974→   */
+   975→  destroy(): void {
+   976→    this.events.clear();
+   977→    this.sessions.clear();
+   978→    this.users.clear();
+   979→    this.realtimeMetrics.clear();
+   980→    this.funnels.clear();
+   981→    
+   982→    logger.info('AnalyticsService destroyed', { event: 'analytics.destroy' });
+   983→  }
+   984→
+   985→  // ============== Type Exports ==============
+   986→
+   987→  export interface SessionData {
+   988→    sessionId: string;
+   989→    userId?: string;
+   990→    deviceId: string;
+   991→    createdAt: Date;
+   992→    lastActivityAt: Date;
+   993→    pageViews: number;
+   994→    eventsTriggered: number;
+   995→    conversionTracked: boolean;
+   996→    duration?: number;
+   997→    referrer?: string;
+   998→    landingPage?: string;
+   999→    exitPage?: string;
+  1000→    utmSource?: string;
+  1001→    utmMedium?: string;
+  1002→    utmCampaign?: string;
+  1003→    utmContent?: string;
+  1004→    utmTerm?: string;
+  1005→    browser?: string;
+  1006→    os?: string;
+  1007→    deviceType?: 'desktop' | 'mobile' | 'tablet';
+  1008→    country?: string;
+  1009→    ip?: string;
+  1010→    isNewSession: boolean;
+  1011→  }
+  1012→
+  1013→  export interface UserData {
+  1014→    userId: string;
+  1015→    firstVisit: Date;
+  1016→    lastVisit: Date;
+  1017→    visitCount: number;
+  1018→    sessionCount: number;
+  1019→    pageViews: number;
+  1020→    eventsTriggered: number;
+  1021→    conversionCount: number;
+  1022→    lifetimeValue: number;
+  1023→    preferredDevice: string;
+  1024→    preferredBrowser: string;
+  1025→    country: string;
+  1026→    isReturning: boolean;
+  1027→    churnRisk: 'low' | 'medium' | 'high';
+  1028→    lastActivityDate: Date;
+  1029→  }
+  1030→
+  1031→  export interface MetricPoint {
+  1032→    timestamp: Date;
+  1033→    value: number;
+  1034→    tags: Record<string, string>;
+  1035→  }
+  1036→
+  1037→  export interface FunnelData {
+  1038→    name: string;
+  1039→    stages: FunnelStage[];
+  1040→    totalEntries: number;
+  1041→    conversions: number;
+  1042→    totalRevenue: number;
+  1043→    currency: string;
+  1044→    startDate: Date;
+  1045→    lastUpdated: Date;
+  1046→  }
+  1047→
+  1048→  export interface FunnelStage {
+  1049→    stageName: string;
+  1050→    count: number;
+  1051→    percentage: number;
+  1052→    dropOff: number;
+  1053→    conversionRate: number;
+  1054→    averageTimeToConvert: number;
+  1055→  }
+  1056→}
+  1057→
+  1058→// ============== Singleton Instance ==============
+  1059→
+  1060→/** Default analytics instance */
+  1061→export const analyticsService = new AnalyticsService();
+  1062→
+  1063→export default AnalyticsService;
+  1064→

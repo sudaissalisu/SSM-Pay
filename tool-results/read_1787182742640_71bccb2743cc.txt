@@ -1,0 +1,973 @@
+     1→/**
+     2→ * Machine Learning Fraud Detection Module
+     3→ * Enterprise-grade transaction risk analysis and anomaly detection
+     4→ * 
+     5→ * @module ml/fraud-detector
+     6→ * @description Real-time fraud detection using statistical analysis, pattern matching,
+     7→ * and rule-based scoring for payment transactions.
+     8→ */
+     9→
+    10→import { logger } from '@/lib/logger';
+    11→import { AppError, ErrorCode } from '@/lib/errors';
+    12→
+    13→// ============== Type Definitions ==============
+    14→
+    15→export interface TransactionFeatures {
+    16→  /** Transaction amount in base currency */
+    17→  amount: number;
+    18→  /** ISO 4217 currency code */
+    19→  currency: string;
+    20→  /** Timestamp of transaction */
+    21→  timestamp: Date;
+    22→  /** Customer email (hashed for privacy) */
+    23→  customerHash: string;
+    24→  /** Device fingerprint identifier */
+    25→  deviceId: string;
+    26→  /** IP address (anonymized) */
+    27→  ipAddress: string;
+    28→  /** Country code from IP geolocation */
+    29→  countryCode: string;
+    30→  /** Payment method type */
+    31→  paymentMethod: 'card' | 'bank_transfer' | 'wallet' | 'ussd';
+    32→  /** Card bin if card payment */
+    33→  cardBin?: string;
+    34→  /** Number of transactions in last hour for this user */
+    35→  txnCount1h: number;
+    36→  /** Number of transactions in last 24 hours for this user */
+    37→  txnCount24h: number;
+    38→  /** Average transaction amount for user (last 30 days) */
+    39→  avgAmount30d: number;
+    40→  /** Standard deviation of amounts */
+    41→  stdAmount30d: number;
+    42→  /** Time since last transaction in minutes */
+    43→  timeSinceLastTxn: number;
+    44→  /** Is this a new device for this user? */
+    45→  isNewDevice: boolean;
+    46→  /** Is this a new country for this user? */
+    47→  isNewCountry: boolean;
+    48→  /** Velocity score (transactions per minute across system) */
+    49→  systemVelocity: number;
+    50→}
+    51→
+    52→export interface FraudScore {
+    53→  /** Overall risk score 0-100 */
+    54→  score: number;
+    55→  /** Risk level classification */
+    56→  level: 'low' | 'medium' | 'high' | 'critical';
+    57→  /** Should this transaction be blocked? */
+    58→  shouldBlock: boolean;
+    59→  /** Should this require manual review? */
+    60→  requiresReview: boolean;
+    61→  /** Individual factor scores */
+    62→  factors: RiskFactor[];
+    63→  /** Processing time in milliseconds */
+    64→  processingTimeMs: number;
+    65→  /** Model version used */
+    66→  modelVersion: string;
+    67→  /** Unique decision ID for audit trail */
+    68→  decisionId: string;
+    69→}
+    70→
+    71→export interface RiskFactor {
+    72→  /** Factor name/identifier */
+    73→  name: string;
+    74→  /** Human-readable description */
+    75→  description: string;
+    76→  /** Score contribution (-100 to +100) */
+    77→  scoreContribution: number;
+    78→  /** Weight applied to this factor */
+    79→  weight: number;
+    80→  /** Triggered rules that contributed */
+    81→  triggeredRules: string[];
+    82→}
+    83→
+    84→export interface FraudRule {
+    85→  /** Unique rule identifier */
+    86→  id: string;
+    87→  /** Rule display name */
+    88→  name: string;
+    89→  /** Rule description */
+    90→  description: string;
+    91→  /** Rule category */
+    92→  category: 'velocity' | 'amount' | 'behavioral' | 'geographic' | 'device' | 'time';
+    93→  /** Base score contribution when triggered */
+    94→  scoreImpact: number;
+    95→  /** Weight multiplier (0-1) */
+    96→  weight: number;
+    97→  /** Whether this rule blocks immediately */
+    98→  isBlocking: boolean;
+    99→  /** Evaluation function */
+   100→  evaluate: (features: TransactionFeatures) => boolean;
+   101→}
+   102→
+   103→export interface UserBehaviorProfile {
+   104→  /** User identifier (hashed) */
+   105→  userId: string;
+   106→  /** Typical transaction amounts (percentiles) */
+   107→  amountPercentiles: {
+   108→    p25: number;
+   109→    p50: number;
+   110→    p75: number;
+   111→    p90: number;
+   112→    p99: number;
+   113→  };
+   114→  /** Typical transaction times (hour of day) */
+   115→  activeHours: number[];
+   116→  /** Typical countries of transaction */
+   117→  typicalCountries: string[];
+   118→  /** Known devices */
+   119→  knownDevices: string[];
+   120→  /** Account age in days */
+   121→  accountAgeDays: number;
+   122→  /** Historical fraud flags */
+   123→  historicalFraudFlags: number;
+   124→  /** Trust score based on history */
+   125→  trustScore: number;
+   126→}
+   127→
+   128→export interface AnomalyDetectionResult {
+   129→  /** Z-score of the amount compared to user history */
+   130→  amountZScore: number;
+   131→  /** Is the amount anomalous? */
+   132→  isAnomalous: boolean;
+   133→  /** Anomaly type if detected */
+   134→  anomalyType?: 'amount_spike' | 'new_device' | 'new_location' | 'velocity_burst' | 'time_anomaly' | null;
+   135→  /** Confidence level (0-1) */
+   136→  confidence: number;
+   137→}
+   138→
+   139→// ============== Constants ==============
+   140→
+   141→const MODEL_VERSION = '2.1.0-enterprise';
+   142→const DECISION_ID_PREFIX = 'FRD';
+   143→const BLOCK_THRESHOLD = 85;
+   144→const REVIEW_THRESHOLD = 60;
+   145→const MEDIUM_RISK_THRESHOLD = 40;
+   146→
+   147→// Default weights for risk categories
+   148→const CATEGORY_WEIGHTS: Record<string, number> = {
+   149→  velocity: 0.25,
+   150→  amount: 0.20,
+   151→  behavioral: 0.20,
+   152→  geographic: 0.15,
+   153→  device: 0.10,
+   154→  time: 0.10,
+   155→};
+   156→
+   157→// ============== Fraud Rules Engine ==============
+   158→
+   159→/**
+   160→ * Predefined fraud detection rules
+   161→ * These rules are evaluated against each transaction
+   162→ */
+   163→export const FRAUD_RULES: FraudRule[] = [
+   164→  // Velocity Rules
+   165→  {
+   166→    id: 'VEL_001',
+   167→    name: 'High Frequency Transactions',
+   168→    description: 'More than 10 transactions in the last hour',
+   169→    category: 'velocity',
+   170→    scoreImpact: 40,
+   171→    weight: CATEGORY_WEIGHTS.velocity,
+   172→    isBlocking: false,
+   173→    evaluate: (f) => f.txnCount1h > 10,
+   174→  },
+   175→  {
+   176→    id: 'VEL_002',
+   177→    name: 'Velocity Burst',
+   178→    description: 'More than 3 transactions in 5 minutes',
+   179→    category: 'velocity',
+   180→    scoreImpact: 35,
+   181→    weight: CATEGORY_WEIGHTS.velocity,
+   182→    isBlocking: false,
+   183→    evaluate: (f) => f.systemVelocity > 100,
+   184→  },
+   185→  {
+   186→    id: 'VEL_003',
+   187→    name: 'Daily Limit Exceeded',
+   188→    description: 'More than 50 transactions in 24 hours',
+   189→    category: 'velocity',
+   190→    scoreImpact: 50,
+   191→    weight: CATEGORY_WEIGHTS.velocity,
+   192→    isBlocking: true,
+   193→    evaluate: (f) => f.txnCount24h > 50,
+   194→  },
+   195→
+   196→  // Amount Rules
+   197→  {
+   198→    id: 'AMT_001',
+   199→    name: 'Unusual Large Amount',
+   200→    description: 'Amount exceeds 5x user average',
+   201→    category: 'amount',
+   202→    scoreImpact: 45,
+   203→    weight: CATEGORY_WEIGHTS.amount,
+   204→    isBlocking: false,
+   205→    evaluate: (f) => f.avgAmount30d > 0 && f.amount > f.avgAmount30d * 5,
+   206→  },
+   207→  {
+   208→    id: 'AMT_002',
+   209→    name: 'Round Amount Pattern',
+   210→    description: 'Transaction amount is suspiciously round (e.g., 10000, 50000)',
+   211→    category: 'amount',
+   212→    scoreImpact: 15,
+   213→    weight: CATEGORY_WEIGHTS.amount,
+   214→    isBlocking: false,
+   215→    evaluate: (f) => {
+   216→      const roundAmounts = [1000, 5000, 10000, 25000, 50000, 100000, 500000, 1000000];
+   217→      return roundAmounts.includes(f.amount);
+   218→    },
+   219→  },
+   220→  {
+   221→    id: 'AMT_003',
+   222→    name: 'High Value Transaction',
+   223→    description: 'Single transaction exceeds threshold',
+   224→    category: 'amount',
+   225→    scoreImpact: 30,
+   226→    weight: CATEGORY_WEIGHTS.amount,
+   227→    isBlocking: false,
+   228→    evaluate: (f) => f.amount > 1000000, // 1M Naira threshold
+   229→  },
+   230→  {
+   231→    id: 'AMT_004',
+   232→    name: 'Amount Just Below Threshold',
+   233→    description: 'Amount suspiciously close to but below verification limit',
+   234→    category: 'amount',
+   235→    scoreImpact: 25,
+   236→    weight: CATEGORY_WEIGHTS.amount,
+   237→    isBlocking: false,
+   238→    evaluate: (f) => f.amount > 900000 && f.amount < 1000001,
+   239→  },
+   240→
+   241→  // Behavioral Rules
+   242→  {
+   243→    id: 'BEH_001',
+   244→    name: 'New Device Login',
+   245→    description: 'Transaction from previously unseen device',
+   246→    category: 'behavioral',
+   247→    scoreImpact: 30,
+   248→    weight: CATEGORY_WEIGHTS.behavioral,
+   249→    isBlocking: false,
+   250→    evaluate: (f) => f.isNewDevice,
+   251→  },
+   252→  {
+   253→    id: 'BEH_002',
+   254→    name: 'New Country Access',
+   255→    description: 'Transaction from unusual geographic location',
+   256→    category: 'behavioral',
+   257→    scoreImpact: 35,
+   258→    weight: CATEGORY_WEIGHTS.behavioral,
+   259→    isBlocking: false,
+   260→    evaluate: (f) => f.isNewCountry,
+   261→  },
+   262→  {
+   263→    id: 'BEH_003',
+   264→    name: 'Rapid Succession',
+   265→    description: 'Multiple transactions within 60 seconds',
+   266→    category: 'behavioral',
+   267→    scoreImpact: 40,
+   268→    weight: CATEGORY_WEIGHTS.behavioral,
+   269→    isBlocking: false,
+   270→    evaluate: (f) => f.timeSinceLastTxn < 1 && f.timeSinceLastTxn >= 0,
+   271→  },
+   272→  {
+   273→    id: 'BEH_004',
+   274→    name: 'Sleeping Pattern Anomaly',
+   275→    description: 'Transaction during unusual hours for user',
+   276→    category: 'behavioral',
+   277→    scoreImpact: 20,
+   278→    weight: CATEGORY_WEIGHTS.behavioral,
+   279→    isBlocking: false,
+   280→    evaluate: (f) => {
+   281→      const hour = f.timestamp.getUTCHours();
+   282→      // Unusual hours: midnight to 5 AM UTC
+   283→      return hour >= 0 && hour <= 5;
+   284→    },
+   285→  },
+   286→
+   287→  // Geographic Rules
+   288→  {
+   289→    id: 'GEO_001',
+   290→    name: 'High Risk Country',
+   291→    description: 'Transaction originating from high-risk jurisdiction',
+   292→    category: 'geographic',
+   293→    scoreImpact: 50,
+   294→    weight: CATEGORY_WEIGHTS.geographic,
+   295→    isBlocking: false,
+   296→    evaluate: (f) => {
+   297→      const highRiskCountries = ['NG', 'GH', 'KE', 'ZA', 'US', 'GB', 'DE'];
+   298→      return !highRiskCountries.includes(f.countryCode);
+   299→    },
+   300→  },
+   301→  {
+   302→    id: 'GEO_002',
+   303→    name: 'Cross-Border Velocity',
+   304→    description: 'Multiple countries in short timeframe',
+   305→    category: 'geographic',
+   306→    scoreImpact: 45,
+   307→    weight: CATEGORY_WEIGHTS.geographic,
+   308→    isBlocking: true,
+   309→    evaluate: (f) => f.isNewCountry && f.txnCount1h > 3,
+   310→  },
+   311→
+   312→  // Device Rules
+   313→  {
+   314→    id: 'DEV_001',
+   315→    name: 'Known Compromised Device',
+   316→    description: 'Device flagged in compromised device database',
+   317→    category: 'device',
+   318→    scoreImpact: 90,
+   319→    weight: CATEGORY_WEIGHTS.device,
+   320→    isBlocking: true,
+   321→    evaluate: () => false, // Would check external DB in production
+   322→  },
+   323→  {
+   324→    id: 'DEV_002',
+   325→    name: 'VPN/Proxy Detected',
+   326→    description: 'Transaction through anonymizing service',
+   327→    category: 'device',
+   328→    scoreImpact: 35,
+   329→    weight: CATEGORY_WEIGHTS.device,
+   330→    isBlocking: false,
+   331→    evaluate: () => false, // Would check IP reputation service
+   332→  },
+   333→
+   334→  // Time-Based Rules
+   335→  {
+   336→    id: 'TIME_001',
+   337→    name: 'Holiday Spike',
+   338→    description: 'Unusual volume during holiday period',
+   339→    category: 'time',
+   340→    scoreImpact: 15,
+   341→    weight: CATEGORY_WEIGHTS.time,
+   342→    isBlocking: false,
+   343→    evaluate: (f) => {
+   344→      const month = f.timestamp.getMonth();
+   345→      const day = f.timestamp.getDate();
+   346→      // Check for major shopping holidays (Black Friday, Christmas, etc.)
+   347→      return (month === 11 && day >= 24) || (month === 11 && day === 25);
+   348→    },
+   349→  },
+   350→];
+   351→
+   352→// ============== Statistical Analysis Functions ==============
+   353→
+   354→/**
+   355→ * Calculate Z-score for amount anomaly detection
+   356→ * Z-score measures how many standard deviations a value is from the mean
+   357→ */
+   358→export function calculateZScore(
+   359→  value: number,
+   360→  mean: number,
+   361→  stdDev: number
+   362→): number {
+   363→  if (stdDev === 0) return 0;
+   364→  return (value - mean) / stdDev;
+   365→}
+   366→
+   367→/**
+   368→ * Detect anomalies using modified Z-score method
+   369→ * More robust to outliers than standard Z-score
+   370→ */
+   371→export function detectAnomaliesModifiedZScore(
+   372→  values: number[],
+   373→  threshold: number = 3.5
+   374→): { index: number; value: number; zScore: number }[] {
+   375→  if (values.length < 3) return [];
+   376→
+   377→  const median = values.slice().sort((a, b) => a - b)[Math.floor(values.length / 2)];
+   378→  
+   379→  const mad = values
+   380→    .map(v => Math.abs(v - median))
+   381→    .sort((a, b) => a - b)[Math.floor(values.length / 2)];
+   382→
+   383→  if (mad === 0) return [];
+   384→
+   385→  return values
+   386→    .map((value, index) => ({
+   387→      index,
+   388→      value,
+   389→      zScore: (0.6745 * (value - median)) / mad,
+   390→    }))
+   391→    .filter(({ zScore }) => Math.abs(zScore) > threshold);
+   392→}
+   393→
+   394→/**
+   395→ * Calculate percentile rank for a value in a distribution
+   396→ */
+   397→export function calculatePercentile(
+   398→  value: number,
+   399→  values: number[]
+   400→): number {
+   401→  if (values.length === 0) return 50;
+   402→  const sorted = values.slice().sort((a, b) => a - b);
+   403→  const rank = sorted.filter(v => v <= value).length;
+   404→  return (rank / sorted.length) * 100;
+   405→}
+   406→
+   407→/**
+   408→ * Exponential moving average for real-time calculations
+   409→ */
+   410→export function calculateEMA(
+   411→  currentValue: number,
+   412→  previousEMA: number,
+   413→  alpha: number = 0.3
+   414→): number {
+   415→  if (previousEMA === 0) return currentValue;
+   416→  return alpha * currentValue + (1 - alpha) * previousEMA;
+   417→}
+   418→
+   419→/**
+   420→ * Calculate entropy of a dataset (measure of randomness)
+   421→ */
+   422→export function calculateEntropy(values: number[]): number {
+   423→  if (values.length === 0) return 0;
+   424→
+   425→  const total = values.reduce((sum, v) => sum + Math.abs(v), 0);
+   426→  if (total === 0) return 0;
+   427→
+   428→  const probabilities = values.map(v => Math.abs(v) / total);
+   429→  return -probabilities.reduce((entropy, p) => {
+   430→    if (p === 0) return entropy;
+   431→    return entropy + p * Math.log2(p);
+   432→  }, 0);
+   433→}
+   434→
+   435→// ============== Main Fraud Detection Class ==============
+   436→
+   437→/**
+   438→ * Enterprise Fraud Detection Engine
+   439→ * 
+   440→ * Provides real-time transaction risk scoring using:
+   441→ * - Rule-based scoring engine
+   442→ * - Statistical anomaly detection
+   443→ * - Behavioral analysis
+   444→ * - Geographic risk assessment
+   445→ * 
+   446→ * @example
+   447→ * ```typescript
+   448→ * const detector = new FraudDetector();
+   449→ * const score = await detector.analyzeTransaction(features);
+   450→ * if (score.shouldBlock) {
+   451→ *   // Block transaction
+   452→ * }
+   453→ * ```
+   454→ */
+   455→export class FraudDetector {
+   456→  private customRules: FraudRule[] = [];
+   457→  private enabledCategories: Set<string> = new Set(Object.keys(CATEGORY_WEIGHTS));
+   458→  private cache: Map<string, FraudScore> = new Map();
+   459→  private readonly cacheTTL: number = 300000; // 5 minutes
+   460→  private analyticsCallback?: (score: FraudScore) => void;
+   461→
+   462→  constructor(options?: {
+   463→    customRules?: FraudRule[];
+   464→    disabledCategories?: string[];
+   465→    analyticsCallback?: (score: FraudScore) => void;
+   466→  }) {
+   467→    if (options?.customRules) {
+   468→      this.customRules = options.customRules;
+   469→    }
+   470→    if (options?.disabledCategories) {
+   471→      options.disabledCategories.forEach(cat => this.enabledCategories.delete(cat));
+   472→    }
+   473→    this.analyticsCallback = options?.analyticsCallback;
+   474→    
+   475→    logger.info('FraudDetector initialized', {
+   476→      event: 'fraud.detector.init',
+   477→      metadata: {
+   478→        modelVersion: MODEL_VERSION,
+   479→        rulesCount: this.getAllRules().length,
+   480→        enabledCategories: Array.from(this.enabledCategories),
+   481→      },
+   482→    });
+   483→  }
+   484→
+   485→  /**
+   486→   * Analyze a transaction for fraud risk
+   487→   * Main entry point for fraud detection
+   488→   */
+   489→  async analyzeTransaction(features: TransactionFeatures): Promise<FraudScore> {
+   490→    const startTime = performance.now();
+   491→    const decisionId = this.generateDecisionId();
+   492→
+   493→    logger.info('Analyzing transaction for fraud', {
+   494→      event: 'fraud.analyze.start',
+   495→      metadata: { decisionId, amount: features.amount, currency: features.currency },
+   496→    });
+   497→
+   498→    try {
+   499→      // Check cache first
+   500→      const cacheKey = this.generateCacheKey(features);
+   501→      const cached = this.cache.get(cacheKey);
+   502→      if (cached) {
+   503→        logger.debug('Returning cached fraud score', {
+   504→          event: 'fraud.analyze.cache_hit',
+   505→          metadata: { decisionId: cached.decisionId },
+   506→        });
+   507→        return cached;
+   508→      }
+   509→
+   510→      // Run all analyses
+   511→      const [ruleScores, anomalyResult] = await Promise.all([
+   512→        this.evaluateRules(features),
+   513→        this.detectAnomalies(features),
+   514→      ]);
+   515→
+   516→      // Combine scores
+   517→      const combinedFactors = this.combineFactors(ruleScores, anomalyResult, features);
+   518→      const finalScore = this.calculateFinalScore(combinedFactors);
+   519→
+   520→      // Determine action
+   521→      const result: FraudScore = {
+   522→        score: finalScore,
+   523→        level: this.classifyRiskLevel(finalScore),
+   524→        shouldBlock: finalScore >= BLOCK_THRESHOLD || combinedFactors.some(f => 
+   525→          FRAUD_RULES.find(r => r.id === f.triggeredRules[0])?.isBlocking
+   526→        ),
+   527→        requiresReview: finalScore >= REVIEW_THRESHOLD && finalScore < BLOCK_THRESHOLD,
+   528→        factors: combinedFactors,
+   529→        processingTimeMs: performance.now() - startTime,
+   530→        modelVersion: MODEL_VERSION,
+   531→        decisionId,
+   532→      };
+   533→
+   534→      // Cache result
+   535→      this.cache.set(cacheKey, result);
+   536→      
+   537→      // Schedule cache cleanup
+   538→      setTimeout(() => this.cache.delete(cacheKey), this.cacheTTL);
+   539→
+   540→      // Send to analytics if callback provided
+   541→      this.analyticsCallback?.(result);
+   542→
+   543→      logger.info('Fraud analysis complete', {
+   544→        event: 'fraud.analyze.complete',
+   545→        metadata: {
+   546→          decisionId,
+   547→          score: result.score,
+   548→          level: result.level,
+   549→          shouldBlock: result.shouldBlock,
+   550→          processingTimeMs: result.processingTimeMs,
+   551→        },
+   552→      });
+   553→
+   554→      return result;
+   555→    } catch (error) {
+   556→      logger.appError(error instanceof Error ? error : new Error(String(error)), {
+   557→        action: 'analyzeTransaction',
+   558→        decisionId,
+   559→      });
+   560→      
+   561→      // Return safe default on error
+   562→      return {
+   563→        score: MEDIUM_RISK_THRESHOLD,
+   564→        level: 'medium',
+   565→        shouldBlock: false,
+   566→        requiresReview: true,
+   567→        factors: [],
+   568→        processingTimeMs: performance.now() - startTime,
+   569→        modelVersion: MODEL_VERSION,
+   570→        decisionId,
+   571→      };
+   572→    }
+   573→  }
+   574→
+   575→  /**
+   576→   * Evaluate all fraud rules against transaction features
+   577→   */
+   578→  private async evaluateRules(features: TransactionFeatures): Promise<RiskFactor[]> {
+   579→    const rules = this.getAllRules();
+   580→    const triggeredFactors: RiskFactor[] = [];
+   581→
+   582→    for (const rule of rules) {
+   583→      try {
+   584→        const isTriggered = rule.evaluate(features);
+   585→        
+   586→        if (isTriggered) {
+   587→          triggeredFactors.push({
+   588→            name: rule.name,
+   589→            description: rule.description,
+   590→            scoreContribution: rule.scoreImpact,
+   591→            weight: rule.weight,
+   592→            triggeredRules: [rule.id],
+   593→          });
+   594→
+   595→          logger.debug(`Rule triggered: ${rule.id}`, {
+   596→            event: 'fraud.rule.triggered',
+   597→            metadata: { ruleId: rule.id, scoreImpact: rule.scoreImpact },
+   598→          });
+   599→        }
+   600→      } catch (error) {
+   601→        logger.warn(`Error evaluating rule ${rule.id}`, {
+   602→          event: 'fraud.rule.error',
+   603→          metadata: { ruleId: rule.id, error: String(error) },
+   604→        });
+   605→      }
+   606→    }
+   607→
+   608→    return triggeredFactors;
+   609→  }
+   610→
+   611→  /**
+   612→   * Detect statistical anomalies in transaction
+   613→   */
+   614→  private async detectAnomalies(features: TransactionFeatures): Promise<AnomalyDetectionResult> {
+   615→    const zScore = calculateZScore(
+   616→      features.amount,
+   617→      features.avgAmount30d,
+   618→      features.stdAmount30d
+   619→    );
+   620→
+   621→    const isAnomalous = Math.abs(zScore) > 2.5;
+   622→    
+   623→    let anomalyType: AnomalyDetectionResult['anomalyType'] = null;
+   624→    let confidence = Math.min(Math.abs(zScore) / 5, 1);
+   625→
+   626→    if (isAnomalous) {
+   627→      if (zScore > 2.5) {
+   628→        anomalyType = 'amount_spike';
+   629→      } else if (zScore < -2.5) {
+   630→        anomalyType = 'amount_spike'; // Unusually small
+   631→      }
+   632→
+   633→      if (features.isNewDevice) {
+   634→        anomalyType = 'new_device';
+   635→        confidence = Math.max(confidence, 0.8);
+   636→      }
+   637→
+   638→      if (features.isNewCountry) {
+   639→        anomalyType = 'new_location';
+   640→        confidence = Math.max(confidence, 0.75);
+   641→      }
+   642→
+   643→      if (features.txnCount1h > 5) {
+   644→        anomalyType = 'velocity_burst';
+   645→        confidence = Math.max(confidence, 0.9);
+   646→      }
+   647→    }
+   648→
+   649→    return {
+   650→      amountZScore: zScore,
+   651→      isAnomalous,
+   652→      anomalyType,
+   653→      confidence,
+   654→    };
+   655→  }
+   656→
+   657→  /**
+   658→   * Combine rule-based scores with anomaly detection results
+   659→   */
+   660→  private combineFactors(
+   661→    ruleFactors: RiskFactor[],
+   662→    anomaly: AnomalyDetectionResult,
+   663→    features: TransactionFeatures
+   664→  ): RiskFactor[] {
+   665→    const combined = [...ruleFactors];
+   666→
+   667→    // Add anomaly as a factor if significant
+   668→    if (anomaly.isAnomalous) {
+   669→      const anomalyScore = Math.min(Math.abs(anomaly.amountZScore) * 10, 50);
+   670→      combined.push({
+   671→        name: 'Statistical Anomaly',
+   672→        description: `Transaction shows ${anomaly.anomalyType} pattern (z-score: ${anomaly.amountZScore.toFixed(2)})`,
+   673→        scoreContribution: anomalyScore,
+   674→        weight: 0.15,
+   675→        triggeredRules: [`ANOMALY_${anomaly.anomalyType?.toUpperCase()}`],
+   676→      });
+   677→    }
+   678→
+   679→    // Add velocity factor if high
+   680→    if (features.systemVelocity > 50) {
+   681→      combined.push({
+   682→        name: 'System Velocity Alert',
+   683→        description: `Elevated system-wide transaction velocity (${features.systemVelocity} txn/min)`,
+   684→        scoreContribution: Math.min(features.systemVelocity, 40),
+   685→        weight: CATEGORY_WEIGHTS.velocity,
+   686→        triggeredRules: ['SYS_VEL_001'],
+   687→      });
+   688→    }
+   689→
+   690→    return combined;
+   691→  }
+   692→
+   693→  /**
+   694→   * Calculate final weighted score from all factors
+   695→   */
+   696→  private calculateFinalScore(factors: RiskFactor[]): number {
+   697→    if (factors.length === 0) return 5; // Base low risk score
+   698→
+   699→    const weightedSum = factors.reduce((sum, factor) => {
+   700→      return sum + (factor.scoreContribution * factor.weight);
+   701→    }, 0);
+   702→
+   703→    const maxPossibleScore = factors.reduce((sum, factor) => {
+   704→      return sum + (100 * factor.weight);
+   705→    }, 0);
+   706→
+   707→    // Normalize to 0-100 scale
+   708→    const normalizedScore = maxPossibleScore > 0 
+   709→      ? (weightedSum / maxPossibleScore) * 100 
+   710→      : 0;
+   711→
+   712→    return Math.min(Math.round(normalizedScore), 100);
+   713→  }
+   714→
+   715→  /**
+   716→   * Classify risk level from numeric score
+   717→   */
+   718→  private classifyRiskLevel(score: number): FraudScore['level'] {
+   719→    if (score >= BLOCK_THRESHOLD) return 'critical';
+   720→    if (score >= REVIEW_THRESHOLD) return 'high';
+   721→    if (score >= MEDIUM_RISK_THRESHOLD) return 'medium';
+   722→    return 'low';
+   723→  }
+   724→
+   725→  /**
+   726→   * Get all applicable rules (default + custom)
+   727→   */
+   728→  getAllRules(): FraudRule[] {
+   729→    return [
+   730→      ...FRAUD_RULES.filter(r => this.enabledCategories.has(r.category)),
+   731→      ...this.customRules.filter(r => this.enabledCategories.has(r.category)),
+   732→    ];
+   733→  }
+   734→
+   735→  /**
+   736→   * Add a custom fraud detection rule
+   737→   */
+   738→  addCustomRule(rule: FraudRule): void {
+   739→    this.customRules.push(rule);
+   740→    logger.info('Custom fraud rule added', {
+   741→      event: 'fraud.rule.added',
+   742→      metadata: { ruleId: rule.id, ruleName: rule.name },
+   743→    });
+   744→  }
+   745→
+   746→  /**
+   747→   * Remove a custom rule by ID
+   748→   */
+   749→  removeCustomRule(ruleId: string): boolean {
+   750→    const initialLength = this.customRules.length;
+   751→    this.customRules = this.customRules.filter(r => r.id !== ruleId);
+   752→    const removed = this.customRules.length < initialLength;
+   753→    
+   754→    if (removed) {
+   755→      logger.info('Custom fraud rule removed', {
+   756→        event: 'fraud.rule.removed',
+   757→        metadata: { ruleId },
+   758→      });
+   759→    }
+   760→    
+   761→    return removed;
+   762→  }
+   763→
+   764→  /**
+   765→   * Enable or disable a rule category
+   766→   */
+   767→  setCategoryEnabled(category: string, enabled: boolean): void {
+   768→    if (enabled) {
+   769→      this.enabledCategories.add(category);
+   770→    } else {
+   771→      this.enabledCategories.delete(category);
+   772→    }
+   773→    
+   774→    logger.info(`Category ${enabled ? 'enabled' : 'disabled'}`, {
+   775→      event: 'fraud.category.toggled',
+   776→      metadata: { category, enabled },
+   777→    });
+   778→  }
+   779→
+   780→  /**
+   781→   * Clear the score cache
+   782→   */
+   783→  clearCache(): void {
+   784→    const size = this.cache.size;
+   785→    this.cache.clear();
+   786→    logger.info('Fraud detection cache cleared', {
+   787→      event: 'fraud.cache.cleared',
+   788→      metadata: { entriesRemoved: size },
+   789→    });
+   790→  }
+   791→
+   792→  /**
+   793→   * Get cache statistics
+   794→   */
+   795→  getCacheStats(): { size: number; maxSize: number } {
+   796→    return {
+   797→      size: this.cache.size,
+   798→      maxSize: Infinity, // No hard limit
+   799→    };
+   800→  }
+   801→
+   802→  /**
+   803→   * Generate unique decision ID
+   804→   */
+   805→  private generateDecisionId(): string {
+   806→    const timestamp = Date.now(36).toUpperCase();
+   807→    const random = Math.random().toString(36).substring(2, 8).toUpperCase();
+   808→    return `${DECISION_ID_PREFIX}_${timestamp}_${random}`;
+   809→  }
+   810→
+   811→  /**
+   812→   * Generate cache key from features
+   813→   */
+   814→  private generateCacheKey(features: TransactionFeatures): string {
+   815→    const keyData = `${features.amount}:${features.currency}:${features.customerHash}:${features.deviceId}:${features.timestamp.getTime()}`;
+   816→    
+   817→    // Simple hash function for cache key
+   818→    let hash = 0;
+   819→    for (let i = 0; i < keyData.length; i++) {
+   820→      const char = keyData.charCodeAt(i);
+   821→      hash = ((hash << 5) - hash) + char;
+   822→      hash = hash & hash; // Convert to 32-bit integer
+   823→    }
+   824→    
+   825→    return `fc_${Math.abs(hash).toString(36)}`;
+   826→  }
+   827→
+   828→  /**
+   829→   * Build or update user behavior profile
+   830→   */
+   831→  static buildUserProfile(
+   832→    transactionHistory: { amount: number; timestamp: Date; countryCode: string; deviceId: string }[]
+   833→  ): UserBehaviorProfile {
+   834→    if (transactionHistory.length === 0) {
+   835→      throw new AppError('Cannot build profile from empty history', ErrorCode.INVALID_INPUT);
+   836→    }
+   837→
+   838→    const amounts = transactionHistory.map(t => t.amount).sort((a, b) => a - b);
+   839→    const countries = [...new Set(transactionHistory.map(t => t.countryCode))];
+   840→    const devices = [...new Set(transactionHistory.map(t => t.deviceId))];
+   841→    
+   842→    const now = new Date();
+   843→    const accountAgeMs = now.getTime() - transactionHistory[0].timestamp.getTime();
+   844→    const accountAgeDays = accountAgeMs / (1000 * 60 * 60 * 24);
+   845→
+   846→    // Calculate percentiles
+   847→    const getPercentile = (p: number) => amounts[Math.floor(amounts.length * p / 100)] || 0;
+   848→
+   849→    return {
+   850→      userId: 'derived_from_history',
+   851→      amountPercentiles: {
+   852→        p25: getPercentile(25),
+   853→        p50: getPercentile(50),
+   854→        p75: getPercentile(75),
+   855→        p90: getPercentile(90),
+   856→        p99: getPercentile(99),
+   857→      },
+   858→      activeHours: this.calculateActiveHours(transactionHistory),
+   859→      typicalCountries: countries,
+   860→      knownDevices: devices,
+   861→      accountAgeDays,
+   862→      historicalFraudFlags: 0, // Would come from DB
+   863→      trustScore: this.calculateTrustScore(accountAgeDays, devices.length, countries.length),
+   864→    };
+   865→  }
+   866→
+   867→  /**
+   868→   * Calculate typical active hours from transaction history
+   869→   */
+   870→  private static calculateActiveHours(
+   871→    history: { timestamp: Date }[]
+   872→  ): number[] {
+   873→    const hourCounts = new Array(24).fill(0);
+   874→    
+   875→    for (const tx of history) {
+   876→      hourCounts[tx.timestamp.getHours()]++;
+   877→    }
+   878→
+   879→    const avgCount = hourCounts.reduce((a, b) => a + b, 0) / 24;
+   880→    
+   881→    return hourCounts
+   882→      .map((count, hour) => ({ hour, count }))
+   883→      .filter(({ count }) => count > avgCount)
+   884→      .map(({ hour }) => hour);
+   885→  }
+   886→
+   887→  /**
+   888→   * Calculate trust score based on account characteristics
+   889→   */
+   890→  private static calculateTrustScore(
+   891→    accountAgeDays: number,
+   892→    deviceCount: number,
+   893→    countryCount: number
+   894→  ): number {
+   895→    let score = 50; // Base score
+   896→
+   897→    // Age bonus (up to 25 points)
+   898→    score += Math.min(accountAgeDays / 30 * 5, 25);
+   899→
+   900→    // Device diversity penalty (too many devices is suspicious)
+   901→    if (deviceCount > 5) {
+   902→      score -= (deviceCount - 5) * 5;
+   903→    }
+   904→
+   905→    // Country diversity penalty
+   906→    if (countryCount > 3) {
+   907→      score -= (countryCount - 3) * 10;
+   908→    }
+   909→
+   910→    return Math.max(0, Math.min(100, score));
+   911→  }
+   912→}
+   913→
+   914→// ============== Singleton Export ==============
+   915→
+   916→/** Global fraud detector instance */
+   917→export const fraudDetector = new FraudDetector();
+   918→
+   919→// ============== Utility Functions ==============
+   920→
+   921→/**
+   922→ * Quick fraud check for simple use cases
+   923→ */
+   924→export async function quickFraudCheck(
+   925→  amount: number,
+   926→  email: string,
+   927→  deviceId: string
+   928→): Promise<{ isSafe: boolean; score: number }> {
+   929→  const features: TransactionFeatures = {
+   930→    amount,
+   931→    currency: 'NGN',
+   932→    timestamp: new Date(),
+   933→    customerHash: Buffer.from(email).toString('base64').slice(0, 16),
+   934→    deviceId,
+   935→    ipAddress: 'unknown',
+   936→    countryCode: 'NG',
+   937→    paymentMethod: 'card',
+   938→    txnCount1h: 1,
+   939→    txnCount24h: 1,
+   940→    avgAmount30d: amount,
+   941→    stdAmount30d: amount * 0.3,
+   942→    timeSinceLastTxn: 60,
+   943→    isNewDevice: true,
+   944→    isNewCountry: false,
+   945→    systemVelocity: 10,
+   946→  };
+   947→
+   948→  const result = await fraudDetector.analyzeTransaction(features);
+   949→  
+   950→  return {
+   951→    isSafe: !result.shouldBlock && result.level !== 'high' && result.level !== 'critical',
+   952→    score: result.score,
+   953→  };
+   954→}
+   955→
+   956→/**
+   957→ * Batch process multiple transactions for fraud analysis
+   958→ */
+   959→export async function batchFraudAnalysis(
+   960→  transactions: Omit<TransactionFeatures, 'timestamp'>[]
+   961→): Promise<FraudScore[]> {
+   962→  return Promise.all(
+   963→    transactions.map(txn => 
+   964→      fraudDetector.analyzeTransaction({
+   965→        ...txn,
+   966→        timestamp: new Date(),
+   967→      })
+   968→    )
+   969→  );
+   970→}
+   971→
+   972→export default FraudDetector;
+   973→
