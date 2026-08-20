@@ -150,7 +150,7 @@ export class RiskFactorCalculator {
     let score = 0;
     const fp = input.deviceFingerprint;
     const isNewDevice = !fp || !knownDevices?.has(fp);
-    const isKnownFp = !!fp && knownDevices?.has(fp) ?? false;
+    const isKnownFp = !!(fp && knownDevices?.has(fp));
     const deviceDays = deviceFirstSeen ? (Date.now() - deviceFirstSeen.getTime()) / 86400000 : Infinity;
 
     if (isNewDevice) {

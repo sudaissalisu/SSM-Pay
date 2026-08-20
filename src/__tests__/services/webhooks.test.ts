@@ -44,7 +44,7 @@ describe('Webhooks Service Module', () => {
       const timestamp = Math.floor(Date.now() / 1000);
       const signature = generateSignature(payload, secret, timestamp);
 
-      expect(signature).toStartWith('sha256=');
+      expect(signature).toEqual(expect.stringMatching(/^sha256=/));
     });
 
     it('should produce different signatures for different payloads', () => {
