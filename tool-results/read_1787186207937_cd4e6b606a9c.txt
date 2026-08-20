@@ -1,0 +1,1954 @@
+     1→/**
+     2→ * Enterprise Monitoring & Observability Service for SSM-Pay Payment Platform
+     3→ * 
+     4→ * Provides comprehensive application metrics collection, health checks,
+     5→ * performance tracking, error rate monitoring, alert management,
+     6→ * and dashboard data generation.
+     7→ * 
+     8→ * @module services/monitoring
+     9→ * @version 1.0.0
+    10→ */
+    11→
+    12→import { logger } from '@/lib/logger';
+    13→import { AppError, ErrorCode } from '@/lib/errors';
+    14→
+    15→// ============== Type Definitions ==============
+    16→
+    17→/**
+    18→ * Metric types supported by the monitoring system
+    19→ */
+    20→export type MetricType = 'counter' | 'gauge' | 'histogram';
+    21→
+    22→/**
+    23→ * Label/tag key-value pairs for metric dimensions
+    24→ */
+    25→export type MetricLabels = Record<string, string | number | boolean>;
+    26→
+    27→/**
+    28→ * Health status levels for system components
+    29→ */
+    30→export type HealthStatus = 'healthy' | 'degraded' | 'unhealthy' | 'unknown';
+    31→
+    32→/**
+    33→ * Alert severity levels for threshold violations
+    34→ */
+    35→export type AlertSeverity = 'info' | 'warning' | 'critical';
+    36→
+    37→/**
+    38→ * Time window options for aggregated metrics
+    39→ */
+    40→export type TimeWindow = '1m' | '5m' | '15m' | '1h' | '6h' | '24h' | '7d';
+    41→
+    42→/**
+    43→ * Base metric interface for all metric types
+    44→ */
+    45→export interface BaseMetric {
+    46→  /** Unique identifier for the metric */
+    47→  name: string;
+    48→  /** Human-readable description */
+    49→  description: string;
+    50→  /** Type of metric */
+    51→  type: MetricType;
+    52→  /** Labels/tags for dimensionality */
+    53→  labels: MetricLabels;
+    54→  /** Creation timestamp */
+    55→  createdAt: Date;
+    56→  /** Last update timestamp */
+    57→  updatedAt: Date;
+    58→}
+    59→
+    60→/**
+    61→ * Counter metric - monotonically increasing value
+    62→ */
+    63→export interface CounterMetric extends BaseMetric {
+    64→  type: 'counter';
+    65→  /** Current counter value */
+    66→  value: number;
+    67→  /** Total increments since creation */
+    68→  totalIncrements: number;
+    69→}
+    70→
+    71→/**
+    72→ * Gauge metric - point-in-time value that can go up or down
+    73→ */
+    74→export interface GaugeMetric extends BaseMetric {
+    75→  type: 'gauge';
+    76→  /** Current gauge value */
+    77→  value: number;
+    78→  /** Minimum value recorded */
+    79→  min: number;
+    80→  /** Maximum value recorded */
+    81→  max: number;
+    82→}
+    83→
+    84→/**
+    85→ * Histogram bucket for distribution tracking
+    86→ */
+    87→export interface HistogramBucket {
+    88→  /** Upper bound of the bucket */
+    89→  upperBound: number;
+    90→  /** Count of observations in this bucket */
+    91→  count: number;
+    92→}
+    93→
+    94→/**
+    95→ * Histogram metric - distribution of values
+    96→ */
+    97→export interface HistogramMetric extends BaseMetric {
+    98→  type: 'histogram';
+    99→  /** Total count of observations */
+   100→  count: number;
+   101→  /** Sum of all observations */
+   102→  sum: number;
+   103→  /** Distribution buckets */
+   104→  buckets: HistogramBucket[];
+   105→  /** Calculated percentiles (updated on request) */
+   106→  percentiles?: Record<number, number>;
+   107→}
+   108→
+   109→/**
+   110→ * Union type for all metric types
+   111→ */
+   112→export type Metric = CounterMetric | GaugeMetric | HistogramMetric;
+   113→
+   114→/**
+   115→ * Health check result for a single component
+   116→ */
+   117→export interface HealthCheckResult {
+   118→  /** Component identifier */
+   119→  component: string;
+   120→  /** Current health status */
+   121→  status: HealthStatus;
+   122→  /** Human-readable message */
+   123→  message?: string;
+   124→  /** Response time in milliseconds */
+   125→  responseTimeMs?: number;
+   126→  /** Additional details */
+   127→  details?: Record<string, unknown>;
+   128→  /** Error message if check failed */
+   129→  error?: string;
+   130→  /** Timestamp of the check */
+   131→  timestamp: Date;
+   132→}
+   133→
+   134→/**
+   135→ * Overall system health status
+   136→ */
+   137→export interface SystemHealth {
+   138→  /** Overall system status */
+   139→  status: HealthStatus;
+   140→  /** Individual component checks */
+   141→  checks: HealthCheckResult[];
+   142→  /** System uptime in seconds */
+   143→  uptimeSeconds: number;
+   144→  /** Timestamp of the health assessment */
+   145→  timestamp: Date;
+   146→  /** Version information */
+   147→  version: string;
+   148→}
+   149→
+   150→/**
+   151→ * Performance measurement record
+   152→ */
+   153→export interface PerformanceRecord {
+   154→  /** Operation/method name */
+   155→  operation: string;
+   156→  /** Response time in milliseconds */
+   157→  durationMs: number;
+   158→  /** Timestamp of the measurement */
+   159→  timestamp: Date;
+   160→  /** Whether the operation was successful */
+   161→  success: boolean;
+   162→  /** Error message if failed */
+   163→  error?: string;
+   164→  /** Additional context */
+   165→  labels?: MetricLabels;
+   166→}
+   167→
+   168→/**
+   169→ * Aggregated performance statistics
+   170→ */
+   171→export interface PerformanceStats {
+   172→  /** Operation name */
+   173→  operation: string;
+   174→  /** Total number of calls */
+   175→  totalCount: number;
+   176→  /** Number of successful calls */
+   177→  successCount: number;
+   178→  /** Number of failed calls */
+   179→  errorCount: number;
+   180→  /** Average response time in ms */
+   181→  avgDurationMs: number;
+   182→  /** Minimum response time in ms */
+   183→  minDurationMs: number;
+   184→  /** Maximum response time in ms */
+   185→  maxDurationMs: number;
+   186→  /** P50 (median) response time in ms */
+   187→  p50Ms: number;
+   188→  /** P95 response time in ms */
+   189→  p95Ms: number;
+   190→  /** P99 response time in ms */
+   191→  p99Ms: number;
+   192→  /** Error rate as percentage (0-100) */
+   193→  errorRate: number;
+   194→  /** Throughput (requests per second) */
+   195→  throughput: number;
+   196→}
+   197→
+   198→/**
+   199→ * Error rate tracking entry
+   200→ */
+   201→export interface ErrorRateEntry {
+   202→  /** Error code or category */
+   203→  errorCode: string;
+   204→  /** Count of errors in current window */
+   205→  count: number;
+   206→  /** Error rate percentage */
+   207→  rate: number;
+   208→  /** Trend direction ('up', 'down', 'stable') */
+   209→  trend: 'up' | 'down' | 'stable';
+   210→  /** Previous window count for comparison */
+   211→  previousCount: number;
+   212→}
+   213→
+   214→/**
+   215→ * Alert definition for threshold monitoring
+   216→ */
+   217→export interface AlertThreshold {
+   218→  /** Unique alert identifier */
+   219→  id: string;
+   220→  /** Metric name to monitor */
+   221→  metricName: string;
+   222→  /** Condition to evaluate */
+   223→  condition: 'gt' | 'lt' | 'gte' | 'lte' | 'eq';
+   224→  /** Threshold value */
+   225→  value: number;
+   226→  /** Alert severity when triggered */
+   227→  severity: AlertSeverity;
+   228→  /** Whether the alert is currently active */
+   229→  isActive: boolean;
+   230→  /** Time window for evaluation */
+   231→  timeWindow: TimeWindow;
+   232→  /** Human-readable description */
+   233→  description: string;
+   234→  /** Callback function when triggered */
+   235→  onTrigger?: (alert: ActiveAlert) => void;
+   236→  /** Created timestamp */
+   237→  createdAt: Date;
+   238→  /** Last triggered timestamp */
+   239→  lastTriggeredAt?: Date;
+   240→  /** Total trigger count */
+   241→  triggerCount: number;
+   242→}
+   243→
+   244→/**
+   245→ * Currently active alert
+   246→ */
+   247→export interface ActiveAlert extends AlertThreshold {
+   248→  /** Current metric value that triggered the alert */
+   249→  currentValue: number;
+   250→  /** When this instance was triggered */
+   251→  triggeredAt: Date;
+   252→  /** Resolved timestamp if applicable */
+   253→  resolvedAt?: Date;
+   254→}
+   255→
+   256→/**
+   257→ * Dashboard data point for visualization
+   258→ */
+   259→export interface DashboardDataPoint {
+   260→  /** Timestamp of the data point */
+   261→  timestamp: Date;
+   262→  /** Value at this point */
+   263→  value: number;
+   264→  /** Optional label */
+   265→  label?: string;
+   266→}
+   267→
+   268→/**
+   269→ * Dashboard widget configuration
+   270→ */
+   271→export interface DashboardWidget {
+   272→  /** Widget identifier */
+   273→  id: string;
+   274→  /** Widget title */
+   275→  title: string;
+   276→  /** Widget type */
+   277→  type: 'line' | 'bar' | 'gauge' | 'counter' | 'status' | 'table';
+   278→  /** Associated metric names */
+   279→  metrics: string[];
+   280→  /** Data points for rendering */
+   281→  data: DashboardDataPoint[];
+   282→  /** Current value */
+   283→  currentValue?: number;
+   284→  /** Unit display */
+   285→  unit?: string;
+   286→  /** Status indicator (for status widgets) */
+   287→  status?: HealthStatus;
+   288→  /** Refresh interval in seconds */
+   289→  refreshInterval: number;
+   290→}
+   291→
+   292→/**
+   293→ * Complete dashboard state
+   294→ */
+   295→export interface DashboardState {
+   296→  /** Dashboard generation timestamp */
+   297→  generatedAt: Date;
+   298→  /** All widgets */
+   299→  widgets: DashboardWidget[];
+   300→  /** Active alerts count */
+   301→  activeAlertsCount: number;
+   302→  /** Overall system status */
+   303→  overallStatus: HealthStatus;
+   304→  /** Data time range */
+   305→  timeRange: TimeWindow;
+   306→}
+   307→
+   308→/**
+   309→ * Options for creating custom metrics
+   310→ */
+   311→export interface CreateMetricOptions {
+   312→  /** Metric name (required) */
+   313→  name: string;
+   314→  /** Human-readable description */
+   315→  description?: string;
+   316→  /** Initial labels */
+   317→  labels?: MetricLabels;
+   318→  /** Default histogram buckets (for histograms) */
+   319→  buckets?: number[];
+   320→}
+   321→
+   322→/**
+   323→ * Options for time-windowed queries
+   324→ */
+   325→export interface TimeWindowQuery {
+   326→  /** Time window size */
+   327→  window: TimeWindow;
+   328→  /** Optional start time override */
+   329→  startTime?: Date;
+   330→  /** Optional end time override */
+   331→  endTime?: Date;
+   332→  /** Filter by labels */
+   333→  labelFilters?: MetricLabels;
+   334→}
+   335→
+   336→// ============== Constants ==============
+   337→
+   338→/** Default histogram buckets for latency measurements */
+   339→const DEFAULT_LATENCY_BUCKETS = [1, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000];
+   340→
+   341→/** Default time window in milliseconds for aggregation */
+   342→const DEFAULT_AGGREGATION_WINDOW_MS = 60000; // 1 minute
+   343→
+   344→/** Maximum number of data points retained per metric */
+   345→const MAX_DATA_POINTS_PER_METRIC = 10080; // 7 days at 1-minute intervals
+   346→
+   347→/** Health check timeout in milliseconds */
+   348→const HEALTH_CHECK_TIMEOUT_MS = 5000;
+   349→
+   350→/** Application version from environment or default */
+   351→const APP_VERSION = process.env.npm_package_version || '1.0.0';
+   352→
+   353→/** Application start time for uptime calculation */
+   354→const APPLICATION_START_TIME = Date.now();
+   355→
+   356→// ============== Main Monitoring Class ==============
+   357→
+   358→/**
+   359→ * Enterprise-grade Monitoring & Observability Service
+   360→ * 
+   361→ * Provides comprehensive metrics collection, health checking,
+   362→ * performance monitoring, alerting, and dashboard generation.
+   363→ * 
+   364→ * @example
+   365→ * ```typescript
+   366→ * import { monitoringService } from '@/services/monitoring';
+   367→ * 
+   368→ * // Record a counter increment
+   369→ * monitoringService.incrementCounter('payment.requests.total', { method: 'initiate' });
+   370→ * 
+   371→ * // Track performance
+   372→ * const stopTimer = monitoringService.startTimer('api.payment.init');
+   373→ * // ... do work ...
+   374→ * stopTimer({ success: true });
+   375→ * 
+   376→ * // Check system health
+   377→ * const health = await monitoringService.getSystemHealth();
+   378→ * ```
+   379→ */
+   380→class MonitoringService {
+   381→  // ============== Private State ==============
+   382→  
+   383→  /** Storage for all registered metrics */
+   384→  private metrics: Map<string, Metric> = new Map();
+   385→  
+   386→  /** Performance records for time-windowed analysis */
+   387→  private performanceRecords: Map<string, PerformanceRecord[]> = new Map();
+   388→  
+   389→  /** Error tracking counts */
+   390→  private errorCounts: Map<string, { count: number; timestamps: Date[] }> = new Map();
+   391→  
+   392→  /** Registered alert thresholds */
+   393→  private alerts: Map<string, AlertThreshold> = new Map();
+   394→  
+   395→  /** Currently active alerts */
+   396→  private activeAlerts: Map<string, ActiveAlert> = new Map();
+   397→  
+   398→  /** Health check registry */
+   399→  private healthChecks: Map<string, () => Promise<HealthCheckResult>> = new Map();
+   400→  
+   401→  /** Historical data points for dashboard visualization */
+   402→  private historicalData: Map<string, DashboardDataPoint[]> = new Map();
+   403→  
+   404→  /** Cleanup interval handle */
+   405→  private cleanupInterval: NodeJS.Timeout | null = null;
+   406→  
+   407→  /** Whether the service has been initialized */
+   408→  private initialized: boolean = false;
+   409→
+   410→  // ============== Initialization ==============
+   411→
+   412→  /**
+   413→   * Initialize the monitoring service
+   414→   * Sets up built-in metrics, starts background tasks
+   415→   */
+   416→  initialize(): void {
+   417→    if (this.initialized) {
+   418→      logger.warn('Monitoring service already initialized', { event: 'monitoring.init' });
+   419→      return;
+   420→    }
+   421→
+   422→    logger.info('Initializing monitoring service', { event: 'monitoring.init' });
+   423→
+   424→    // Register built-in metrics
+   425→    this.registerBuiltInMetrics();
+   426→    
+   427→    // Start cleanup interval
+   428→    this.startCleanupInterval();
+   429→    
+   430→    this.initialized = true;
+   431→    logger.info('Monitoring service initialized successfully', { event: 'monitoring.ready' });
+   432→  }
+   433→
+   434→  /**
+   435→   * Register built-in application metrics
+   436→   * @private
+   437→   */
+   438→  private registerBuiltInMetrics(): void {
+   439→    // Request counters
+   440→    this.createCounter('http_requests_total', 'Total HTTP requests received');
+   441→    this.createCounter('http_requests_success_total', 'Total successful HTTP requests');
+   442→    this.createCounter('http_requests_error_total', 'Total failed HTTP requests');
+   443→    
+   444→    // Payment-specific counters
+   445→    this.createCounter('payments_initiated_total', 'Total payment initiations');
+   446→    this.createCounter('payments_completed_total', 'Total completed payments');
+   447→    this.createCounter('payments_failed_total', 'Total failed payments');
+   448→    this.createCounter('payments_refunded_total', 'Total refunded payments');
+   449→    
+   450→    // Latency histograms
+   451→    this.createHistogram('http_request_duration_ms', 'HTTP request duration in milliseconds');
+   452→    this.createHistogram('payment_processing_duration_ms', 'Payment processing duration in milliseconds');
+   453→    this.createHistogram('external_api_call_duration_ms', 'External API call duration in milliseconds');
+   454→    
+   455→    // Gauges for current state
+   456→    this.createGauge('active_connections', 'Currently active connections');
+   457→    this.createGauge('pending_payments', 'Payments awaiting completion');
+   458→    this.createGauge('queue_depth', 'Current processing queue depth');
+   459→    
+   460→    // Business metrics
+   461→    this.createCounter('revenue_total', 'Total revenue processed', { unit: 'minor_units' });
+   462→    this.createGauge('average_transaction_value', 'Average transaction value');
+   463→  }
+   464→
+   465→  /**
+   466→   * Start the background cleanup interval
+   467→   * @private
+   468→   */
+   469→  private startCleanupInterval(): void {
+   470→    // Run cleanup every 5 minutes
+   471→    this.cleanupInterval = setInterval(() => {
+   472→      try {
+   473→        this.cleanupOldData();
+   474→        this.evaluateAllAlerts();
+   475→      } catch (error) {
+   476→        logger.error('Error in monitoring cleanup cycle', {
+   477→          event: 'monitoring.error',
+   478→          error: error instanceof Error ? error : new AppError(String(error)),
+   479→        });
+   480→      }
+   481→    }, 5 * 60 * 1000);
+   482→    
+   483→    // Don't prevent process exit
+   484→    if (this.cleanupInterval.unref) {
+   485→      this.cleanupInterval.unref();
+   486→    }
+   487→  }
+   488→
+   489→  /**
+   490→   * Clean up old data beyond retention period
+   491→   * @private
+   492→   */
+   493→  private cleanupOldData(): void {
+   494→    const cutoffTime = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000); // 7 days ago
+   495→    
+   496→    // Clean up performance records
+   497→    for (const [key, records] of Array.from(this.performanceRecords.entries())) {
+   498→      const filtered = records.filter(r => r.timestamp > cutoffTime);
+   499→      if (filtered.length !== records.length) {
+   500→        this.performanceRecords.set(key, filtered);
+   501→      }
+   502→    }
+   503→    
+   504→    // Clean up historical data
+   505→    for (const [key, dataPoints] of Array.from(this.historicalData.entries())) {
+   506→      const filtered = dataPoints.filter(d => d.timestamp > cutoffTime);
+   507→      if (filtered.length !== dataPoints.length) {
+   508→        this.historicalData.set(key, filtered.slice(-MAX_DATA_POINTS_PER_METRIC));
+   509→      }
+   510→    }
+   511→    
+   512→    // Clean up error timestamps
+   513→    for (const [key, data] of Array.from(this.errorCounts.entries())) {
+   514→      const filteredTimestamps = data.timestamps.filter(t => t > cutoffTime);
+   515→      if (filteredTimestamps.length !== data.timestamps.length) {
+   516→        this.errorCounts.set(key, {
+   517→          count: filteredTimestamps.length,
+   518→          timestamps: filteredTimestamps,
+   519→        });
+   520→      }
+   521→    }
+   522→
+   523→    logger.debug('Completed monitoring data cleanup', {
+   524→      event: 'monitoring.cleanup',
+   525→      metadata: { cutoffTime: cutoffTime.toISOString() },
+   526→    });
+   527→  }
+   528→
+   529→  // ============== Counter Metrics ==============
+   530→
+   531→  /**
+   532→   * Create a new counter metric
+   533→   * @param name - Unique metric name
+   534→   * @param description - Human-readable description
+   535→   * @param labels - Initial labels
+   536→   * @returns The created counter metric
+   537→   * @throws {AppError} If metric already exists
+   538→   */
+   539→  createCounter(
+   540→    name: string,
+   541→    description: string = '',
+   542→    labels: MetricLabels = {}
+   543→  ): CounterMetric {
+   544→    if (this.metrics.has(name)) {
+   545→      throw new AppError(
+   546→        `Metric '${name}' already exists`,
+   547→        ErrorCode.VALIDATION_ERROR,
+   548→        { severity: 'warning' }
+   549→      );
+   550→    }
+   551→
+   552→    const now = new Date();
+   553→    const counter: CounterMetric = {
+   554→      name,
+   555→      description,
+   556→      type: 'counter',
+   557→      labels: { ...labels },
+   558→      value: 0,
+   559→      totalIncrements: 0,
+   560→      createdAt: now,
+   561→      updatedAt: now,
+   562→    };
+   563→
+   564→    this.metrics.set(name, counter);
+   565→    logger.debug(`Created counter metric: ${name}`, { event: 'metric.created', metadata: { name, type: 'counter' } });
+   566→    
+   567→    return counter;
+   568→  }
+   569→
+   570→  /**
+   571→   * Increment a counter metric
+   572→   * @param name - Metric name to increment
+   573→   * @param amount - Amount to add (default: 1)
+   574→   * @param labels - Additional labels for this increment
+   575→   * @throws {AppError} If metric doesn't exist or is not a counter
+   576→   */
+   577→  incrementCounter(
+   578→    name: string,
+   579→    amount: number = 1,
+   580→    labels: MetricLabels = {}
+   581→  ): void {
+   582→    const metric = this.metrics.get(name);
+   583→    
+   584→    if (!metric) {
+   585→      // Auto-create if doesn't exist
+   586→      this.createCounter(name);
+   587→      return this.incrementCounter(name, amount, labels);
+   588→    }
+   589→    
+   590→    if (metric.type !== 'counter') {
+   591→      throw new AppError(
+   592→        `Metric '${name}' is not a counter`,
+   593→        ErrorCode.VALIDATION_ERROR,
+   594→        { severity: 'warning' }
+   595→      );
+   596→    }
+   597→
+   598→    metric.value += amount;
+   599→    metric.totalIncrements++;
+   600→    metric.updatedAt = new Date();
+   601→    
+   602→    // Merge labels if provided
+   603→    if (Object.keys(labels).length > 0) {
+   604→      metric.labels = { ...metric.labels, ...labels };
+   605→    }
+   606→
+   607→    // Record historical data point
+   608→    this.recordHistoricalDataPoint(name, metric.value);
+   609→  }
+   610→
+   611→  /**
+   612→   * Get current counter value
+   613→   * @param name - Counter metric name
+   614→   * @returns Current counter value
+   615→   */
+   616→  getCounterValue(name: string): number {
+   617→    const metric = this.metrics.get(name);
+   618→    
+   619→    if (!metric || metric.type !== 'counter') {
+   620→      return 0;
+   621→    }
+   622→    
+   623→    return metric.value;
+   624→  }
+   625→
+   626→  // ============== Gauge Metrics ==============
+   627→
+   628→  /**
+   629→   * Create a new gauge metric
+   630→   * @param name - Unique metric name
+   631→   * @param description - Human-readable description
+   632→   * @param labels - Initial labels
+   633→   * @returns The created gauge metric
+   634→   */
+   635→  createGauge(
+   636→    name: string,
+   637→    description: string = '',
+   638→    labels: MetricLabels = {}
+   639→  ): GaugeMetric {
+   640→    if (this.metrics.has(name)) {
+   641→      throw new AppError(
+   642→        `Metric '${name}' already exists`,
+   643→        ErrorCode.VALIDATION_ERROR,
+   644→        { severity: 'warning' }
+   645→      );
+   646→    }
+   647→
+   648→    const now = new Date();
+   649→    const gauge: GaugeMetric = {
+   650→      name,
+   651→      description,
+   652→      type: 'gauge',
+   653→      labels: { ...labels },
+   654→      value: 0,
+   655→      min: Infinity,
+   656→      max: -Infinity,
+   657→      createdAt: now,
+   658→      updatedAt: now,
+   659→    };
+   660→
+   661→    this.metrics.set(name, gauge);
+   662→    logger.debug(`Created gauge metric: ${name}`, { event: 'metric.created', metadata: { name, type: 'gauge' } });
+   663→    
+   664→    return gauge;
+   665→  }
+   666→
+   667→  /**
+   668→   * Set a gauge metric value
+   669→   * @param name - Gauge metric name
+   670→   * @param value - Value to set
+   671→   * @param labels - Additional labels
+   672→   */
+   673→  setGauge(name: string, value: number, labels: MetricLabels = {}): void {
+   674→    let metric = this.metrics.get(name) as GaugeMetric | undefined;
+   675→    
+   676→    if (!metric) {
+   677→      this.createGauge(name);
+   678→      metric = this.metrics.get(name) as GaugeMetric;
+   679→    }
+   680→    
+   681→    if (metric!.type !== 'gauge') {
+   682→      throw new AppError(
+   683→        `Metric '${name}' is not a gauge`,
+   684→        ErrorCode.VALIDATION_ERROR,
+   685→        { severity: 'warning' }
+   686→      );
+   687→    }
+   688→
+   689→    metric!.value = value;
+   690→    metric!.min = Math.min(metric!.min, value);
+   691→    metric!.max = Math.max(metric!.max, value);
+   692→    metric!.updatedAt = new Date();
+   693→    
+   694→    if (Object.keys(labels).length > 0) {
+   695→      metric!.labels = { ...metric!.labels, ...labels };
+   696→    }
+   697→
+   698→    this.recordHistoricalDataPoint(name, value);
+   699→  }
+   700→
+   701→  /**
+   702→   * Increment a gauge metric
+   703→   * @param name - Gauge metric name
+   704→   * @param amount - Amount to add
+   705→   */
+   706→  incrementGauge(name: string, amount: number = 1): void {
+   707→    const metric = this.metrics.get(name) as GaugeMetric | undefined;
+   708→    const currentValue = metric?.value ?? 0;
+   709→    this.setGauge(name, currentValue + amount);
+   710→  }
+   711→
+   712→  /**
+   713→   * Decrement a gauge metric
+   714→   * @param name - Gauge metric name
+   715→   * @param amount - Amount to subtract
+   716→   */
+   717→  decrementGauge(name: string, amount: number = 1): void {
+   718→    const metric = this.metrics.get(name) as GaugeMetric | undefined;
+   719→    const currentValue = metric?.value ?? 0;
+   720→    this.setGauge(name, currentValue - amount);
+   721→  }
+   722→
+   723→  /**
+   724→   * Get current gauge value
+   725→   * @param name - Gauge metric name
+   726→   * @returns Current gauge value or undefined
+   727→   */
+   728→  getGaugeValue(name: string): number | undefined {
+   729→    const metric = this.metrics.get(name);
+   730→    
+   731→    if (!metric || metric.type !== 'gauge') {
+   732→      return undefined;
+   733→    }
+   734→    
+   735→    return metric.value;
+   736→  }
+   737→
+   738→  // ============== Histogram Metrics ==============
+   739→
+   740→  /**
+   741→   * Create a new histogram metric
+   742→   * @param name - Unique metric name
+   743→   * @param description - Human-readable description
+   744→   * @param buckets - Bucket boundaries
+   745→   * @param labels - Initial labels
+   746→   * @returns The created histogram metric
+   747→   */
+   748→  createHistogram(
+   749→    name: string,
+   750→    description: string = '',
+   751→    buckets: number[] = DEFAULT_LATENCY_BUCKETS,
+   752→    labels: MetricLabels = {}
+   753→  ): HistogramMetric {
+   754→    if (this.metrics.has(name)) {
+   755→      throw new AppError(
+   756→        `Metric '${name}' already exists`,
+   757→        ErrorCode.VALIDATION_ERROR,
+   758→        { severity: 'warning' }
+   759→      );
+   760→    }
+   761→
+   762→    // Sort buckets and ensure they're positive
+   763→    const sortedBuckets = [...buckets].filter(b => b > 0).sort((a, b) => a - b);
+   764→
+   765→    const now = new Date();
+   766→    const histogram: HistogramMetric = {
+   767→      name,
+   768→      description,
+   769→      type: 'histogram',
+   770→      labels: { ...labels },
+   771→      count: 0,
+   772→      sum: 0,
+   773→      buckets: sortedBuckets.map(upperBound => ({
+   774→        upperBound,
+   775→        count: 0,
+   776→      })),
+   777→      createdAt: now,
+   778→      updatedAt: now,
+   779→    };
+   780→
+   781→    this.metrics.set(name, histogram);
+   782→    logger.debug(`Created histogram metric: ${name}`, { event: 'metric.created', metadata: { name, type: 'histogram' } });
+   783→    
+   784→    return histogram;
+   785→  }
+   786→
+   787→  /**
+   788→   * Observe a value in a histogram
+   789→   * @param name - Histogram metric name
+   790→   * @param value - Value to observe
+   791→   * @param labels - Additional labels
+   792→   */
+   793→  observeHistogram(name: string, value: number, labels: MetricLabels = {}): void {
+   794→    let metric = this.metrics.get(name) as HistogramMetric | undefined;
+   795→    
+   796→    if (!metric) {
+   797→      this.createHistogram(name);
+   798→      metric = this.metrics.get(name) as HistogramMetric;
+   799→    }
+   800→    
+   801→    if (metric!.type !== 'histogram') {
+   802→      throw new AppError(
+   803→        `Metric '${name}' is not a histogram`,
+   804→        ErrorCode.VALIDATION_ERROR,
+   805→        { severity: 'warning' }
+   806→      );
+   807→    }
+   808→
+   809→    // Update basic stats
+   810→    metric!.count++;
+   811→    metric!.sum += value;
+   812→    metric!.updatedAt = new Date();
+   813→
+   814→    // Find appropriate bucket
+   815→    for (const bucket of metric!.buckets) {
+   816→      if (value <= bucket.upperBound) {
+   817→        bucket.count++;
+   818→      }
+   819→    }
+   820→
+   821→    // Merge labels
+   822→    if (Object.keys(labels).length > 0) {
+   823→      metric!.labels = { ...metric!.labels, ...labels };
+   824→    }
+   825→
+   826→    // Record raw value for percentile calculations
+   827→    this.recordHistoricalDataPoint(`${name}_raw`, value);
+   828→  }
+   829→
+   830→  /**
+   831→   * Get histogram statistics including percentiles
+   832→   * @param name - Histogram metric name
+   833→   * @returns Histogram with calculated percentiles
+   834→   */
+   835→  getHistogramStats(name: string): HistogramMetric | null {
+   836→    const metric = this.metrics.get(name);
+   837→    
+   838→    if (!metric || metric.type !== 'histogram') {
+   839→      return null;
+   840→    }
+   841→
+   842→    // Get all observed values for percentile calculation
+   843→    const rawData = this.historicalData.get(`${name}_raw`) || [];
+   844→    const values = rawData.map(d => d.value).sort((a, b) => a - b);
+   845→
+   846→    if (values.length > 0) {
+   847→      metric.percentiles = {
+   848→        50: this.calculatePercentile(values, 50),
+   849→        90: this.calculatePercentile(values, 90),
+   850→        95: this.calculatePercentile(values, 95),
+   851→        99: this.calculatePercentile(values, 99),
+   852→      };
+   853→    }
+   854→
+   855→    return metric;
+   856→  }
+   857→
+   858→  /**
+   859→   * Calculate percentile from sorted values
+   860→   * @private
+   861→   */
+   862→  private calculatePercentile(sortedValues: number[], percentile: number): number {
+   863→    if (sortedValues.length === 0) return 0;
+   864→    
+   865→    const index = (percentile / 100) * (sortedValues.length - 1);
+   866→    const lower = Math.floor(index);
+   867→    const upper = Math.ceil(index);
+   868→    
+   869→    if (lower === upper) {
+   870→      return sortedValues[lower];
+   871→    }
+   872→    
+   873→    return sortedValues[lower] + (sortedValues[upper] - sortedValues[lower]) * (index - lower);
+   874→  }
+   875→
+   876→  // ============== Performance Tracking ==============
+   877→
+   878→  /**
+   879→   * Start a timer for performance measurement
+   880→   * @param operation - Name of the operation being timed
+   881→   * @returns Function to call when operation completes
+   882→   * 
+   883→   * @example
+   884→   * ```typescript
+   885→   * const endTimer = monitoringService.startTimer('database.query');
+   886→   * // ... perform operation ...
+   887→   * endTimer({ success: true });
+   888→   * ```
+   889→   */
+   890→  startTimer(operation: string): (result?: { success: boolean; error?: string; labels?: MetricLabels }) => number {
+   891→    const startTime = Date.now();
+   892→    
+   893→    return (result?: { success: boolean; error?: string; labels?: MetricLabels }): number => {
+   894→      const endTime = Date.now();
+   895→      const durationMs = endTime - startTime;
+   896→      
+   897→      const record: PerformanceRecord = {
+   898→        operation,
+   899→        durationMs,
+   900→        timestamp: new Date(startTime),
+   901→        success: result?.success ?? true,
+   902→        error: result?.error,
+   903→        labels: result?.labels,
+   904→      };
+   905→      
+   906→      // Store performance record
+   907→      const records = this.performanceRecords.get(operation) || [];
+   908→      records.push(record);
+   909→      this.performanceRecords.set(operation, records);
+   910→      
+   911→      // Update corresponding histogram if exists
+   912→      const histogramName = `${operation}_duration_ms`;
+   913→      if (this.metrics.has(histogramName)) {
+   914→        this.observeHistogram(histogramName, durationMs, result?.labels);
+   915→      }
+   916→      
+   917→      return durationMs;
+   918→    };
+   919→  }
+   920→
+   921→  /**
+   922→   * Get aggregated performance statistics for an operation
+   923→   * @param operation - Operation name
+   924→   * @param query - Time window query options
+   925→   * @returns Aggregated performance statistics
+   926→   */
+   927→  getPerformanceStats(operation: string, query?: TimeWindowQuery): PerformanceStats {
+   928→    const records = this.getFilteredPerformanceRecords(operation, query);
+   929→    
+   930→    if (records.length === 0) {
+   931→      return this.emptyPerformanceStats(operation);
+   932→    }
+   933→    
+   934→    const durations = records.map(r => r.durationMs).sort((a, b) => a - b);
+   935→    const successRecords = records.filter(r => r.success);
+   936→    const errorRecords = records.filter(r => !r.success);
+   937→    
+   938→    // Calculate time window for throughput
+   939→    const timeSpanMs = this.getTimeSpanMs(records, query);
+   940→    
+   941→    return {
+   942→      operation,
+   943→      totalCount: records.length,
+   944→      successCount: successRecords.length,
+   945→      errorCount: errorRecords.length,
+   946→      avgDurationMs: durations.reduce((a, b) => a + b, 0) / durations.length,
+   947→      minDurationMs: durations[0],
+   948→      maxDurationMs: durations[durations.length - 1],
+   949→      p50Ms: this.calculatePercentile(durations, 50),
+   950→      p95Ms: this.calculatePercentile(durations, 95),
+   951→      p99Ms: this.calculatePercentile(durations, 99),
+   952→      errorRate: (errorRecords.length / records.length) * 100,
+   953→      throughput: timeSpanMs > 0 ? (records.length / (timeSpanMs / 1000)) : 0,
+   954→    };
+   955→  }
+   956→
+   957→  /**
+   958→   * Get performance stats for all operations
+   959→   * @param query - Time window query options
+   960→   * @returns Map of operation names to their stats
+   961→   */
+   962→  getAllPerformanceStats(query?: TimeWindowQuery): Map<string, PerformanceStats> {
+   963→    const stats = new Map<string, PerformanceStats>();
+   964→    
+   965→    for (const operation of Array.from(this.performanceRecords.keys())) {
+   966→      stats.set(operation, this.getPerformanceStats(operation, query));
+   967→    }
+   968→    
+   969→    return stats;
+   970→  }
+   971→
+   972→  /**
+   973→   * Get empty performance stats placeholder
+   974→   * @private
+   975→   */
+   976→  private emptyPerformanceStats(operation: string): PerformanceStats {
+   977→    return {
+   978→      operation,
+   979→      totalCount: 0,
+   980→      successCount: 0,
+   981→      errorCount: 0,
+   982→      avgDurationMs: 0,
+   983→      minDurationMs: 0,
+   984→      maxDurationMs: 0,
+   985→      p50Ms: 0,
+   986→      p95Ms: 0,
+   987→      p99Ms: 0,
+   988→      errorRate: 0,
+   989→      throughput: 0,
+   990→    };
+   991→  }
+   992→
+   993→  /**
+   994→   * Get filtered performance records based on time window
+   995→   * @private
+   996→   */
+   997→  private getFilteredPerformanceRecords(operation: string, query?: TimeWindowQuery): PerformanceRecord[] {
+   998→    let records = this.performanceRecords.get(operation) || [];
+   999→    
+  1000→    if (query) {
+  1001→      const { startTime, endTime } = this.getTimeBounds(query.window, query.startTime, query.endTime);
+  1002→      records = records.filter(r => r.timestamp >= startTime && r.timestamp <= endTime);
+  1003→      
+  1004→      // Apply label filters
+  1005→      if (query.labelFilters) {
+  1006→        records = records.filter(record => {
+  1007→          if (!record.labels) return false;
+  1008→          return Object.entries(query.labelFilters!).every(
+  1009→            ([key, value]) => record.labels![key] === value
+  1010→          );
+  1011→        });
+  1012→      }
+  1013→    }
+  1014→    
+  1015→    return records;
+  1016→  }
+  1017→
+  1018→  /**
+  1019→   * Calculate time span in milliseconds from records
+  1020→   * @private
+  1021→   */
+  1022→  private getTimeSpanMs(records: PerformanceRecord[], query?: TimeWindowQuery): number {
+  1023→    if (query?.startTime && query?.endTime) {
+  1024→      return query.endTime.getTime() - query.startTime.getTime();
+  1025→    }
+  1026→    
+  1027→    if (records.length < 2) {
+  1028→      return records.length === 1 ? 60000 : 0; // Assume 1 minute for single record
+  1029→    }
+  1030→    
+  1031→    return records[records.length - 1].timestamp.getTime() - records[0].timestamp.getTime();
+  1032→  }
+  1033→
+  1034→  // ============== Error Rate Monitoring ==============
+  1035→
+  1036→  /**
+  1037→   * Record an error occurrence
+  1038→   * @param errorCode - Error code or category
+  1039→   * @param error - Optional error object
+  1040→   */
+  1041→  recordError(errorCode: string, error?: Error | AppError): void {
+  1042→    const now = new Date();
+  1043→    const existing = this.errorCounts.get(errorCode) || { count: 0, timestamps: [] };
+  1044→    
+  1045→    existing.count++;
+  1046→    existing.timestamps.push(now);
+  1047→    
+  1048→    this.errorCounts.set(errorCode, existing);
+  1049→    
+  1050→    // Increment error counter metric
+  1051→    this.incrementCounter('errors_total', 1, { error_code: errorCode });
+  1052→    
+  1053→    logger.debug(`Recorded error: ${errorCode}`, {
+  1054→      event: 'monitoring.error_recorded',
+  1055→      metadata: { errorCode, totalErrors: existing.count },
+  1056→      error,
+  1057→    });
+  1058→  }
+  1059→
+  1060→  /**
+  1061→   * Get error rates for all tracked error codes
+  1062→   * @param window - Time window for rate calculation
+  1063→   * @returns Array of error rate entries
+  1064→   */
+  1065→  getErrorRates(window: TimeWindow = '1h'): ErrorRateEntry[] {
+  1066→    const { startTime } = this.getTimeBounds(window);
+  1067→    const { startTime: prevStartTime } = this.getTimeBounds(window, undefined, startTime);
+  1068→    
+  1069→    const entries: ErrorRateEntry[] = [];
+  1070→    
+  1071→    for (const [errorCode, data] of Array.from(this.errorCounts.entries())) {
+  1072→      const currentCount = data.timestamps.filter(t => t >= startTime).length;
+  1073→      const previousCount = data.timestamps.filter(t => t >= prevStartTime && t < startTime).length;
+  1074→      
+  1075→      // Calculate rate (errors per minute)
+  1076→      const windowMinutes = this.getWindowMinutes(window);
+  1077→      const rate = currentCount / windowMinutes;
+  1078→      
+  1079→      // Determine trend
+  1080→      let trend: 'up' | 'down' | 'stable' = 'stable';
+  1081→      if (previousCount > 0) {
+  1082→        const changeRatio = currentCount / previousCount;
+  1083→        if (changeRatio > 1.2) trend = 'up';
+  1084→        else if (changeRatio < 0.8) trend = 'down';
+  1085→      }
+  1086→      
+  1087→      entries.push({
+  1088→        errorCode,
+  1089→        count: currentCount,
+  1090→        rate,
+  1091→        trend,
+  1092→        previousCount,
+  1093→      });
+  1094→    }
+  1095→    
+  1096→    // Sort by count descending
+  1097→    entries.sort((a, b) => b.count - a.count);
+  1098→    
+  1099→    return entries;
+  1100→  }
+  1101→
+  1102→  /**
+  1103→   * Get total error count for a specific error code
+  1104→   * @param errorCode - Error code to look up
+  1105→   * @returns Total count or 0 if not found
+  1106→   */
+  1107→  getErrorCount(errorCode: string): number {
+  1108→    return this.errorCounts.get(errorCode)?.count ?? 0;
+  1109→  }
+  1110→
+  1111→  // ============== Health Checks ==============
+  1112→
+  1113→  /**
+  1114→   * Register a custom health check
+  1115→   * @param component - Component identifier
+  1116→   * @param checkFn - Async function that performs the health check
+  1117→   */
+  1118→  registerHealthCheck(
+  1119→    component: string,
+  1120→    checkFn: () => Promise<HealthCheckResult>
+  1121→  ): void {
+  1122→    this.healthChecks.set(component, checkFn);
+  1123→    logger.debug(`Registered health check for: ${component}`, { event: 'health.check_registered' });
+  1124→  }
+  1125→
+  1126→  /**
+  1127→   * Perform liveness check (basic process health)
+  1128→   * @returns Liveness health result
+  1129→   */
+  1130→  async checkLiveness(): Promise<HealthCheckResult> {
+  1131→    const startTime = Date.now();
+  1132→    
+  1133→    try {
+  1134→      // Basic liveness - just check if we can respond
+  1135→      return {
+  1136→        component: 'liveness',
+  1137→        status: 'healthy',
+  1138→        message: 'Service is alive',
+  1139→        responseTimeMs: Date.now() - startTime,
+  1140→        timestamp: new Date(),
+  1141→      };
+  1142→    } catch (error) {
+  1143→      return {
+  1144→        component: 'liveness',
+  1145→        status: 'unhealthy',
+  1146→        message: 'Liveness check failed',
+  1147→        responseTimeMs: Date.now() - startTime,
+  1148→        timestamp: new Date(),
+  1149→        error: error instanceof Error ? error.message : String(error),
+  1150→      };
+  1151→    }
+  1152→  }
+  1153→
+  1154→  /**
+  1155→   * Perform readiness check (dependencies available)
+  1156→   * @returns Readiness health result
+  1157→   */
+  1158→  async checkReadiness(): Promise<HealthCheckResult> {
+  1159→    const startTime = Date.now();
+  1160→    const checks: HealthCheckResult[] = [];
+  1161→    
+  1162→    // Check memory usage
+  1163→    const memUsage = process.memoryUsage();
+  1164→    const heapUsedMB = memUsage.heapUsed / 1024 / 1024;
+  1165→    const heapLimitMB = memUsage.heapUsed / 1024 / 1024; // Note: heap limit not directly available
+  1166→    const memoryHealthy = heapUsedMB < 500; // 500MB threshold
+  1167→    
+  1168→    checks.push({
+  1169→      component: 'memory',
+  1170→      status: memoryHealthy ? 'healthy' : 'degraded',
+  1171→      message: `Heap usage: ${heapUsedMB.toFixed(2)}MB`,
+  1172→      responseTimeMs: Date.now() - startTime,
+  1173→      timestamp: new Date(),
+  1174→      details: { heapUsedMB, rssMB: memUsage.rss / 1024 / 1024 },
+  1175→    });
+  1176→    
+  1177→    // Check event loop lag
+  1178→    const eventLoopLag = await this.measureEventLoopLag();
+  1179→    checks.push({
+  1180→      component: 'event_loop',
+  1181→      status: eventLoopLag < 100 ? 'healthy' : 'degraded',
+  1182→      message: `Event loop lag: ${eventLoopLag.toFixed(2)}ms`,
+  1183→      responseTimeMs: Date.now() - startTime,
+  1184→      timestamp: new Date(),
+  1185→      details: { lagMs: eventLoopLag },
+  1186→    });
+  1187→    
+  1188→    // Determine overall readiness
+  1189→    const allHealthy = checks.every(c => c.status === 'healthy');
+  1190→    const hasUnhealthy = checks.some(c => c.status === 'unhealthy');
+  1191→    
+  1192→    return {
+  1193→      component: 'readiness',
+  1194→      status: hasUnhealthy ? 'unhealthy' : allHealthy ? 'healthy' : 'degraded',
+  1195→      message: `Readiness: ${checks.filter(c => c.status === 'healthy').length}/${checks.length} checks passing`,
+  1196→      responseTimeMs: Date.now() - startTime,
+  1197→      timestamp: new Date(),
+  1198→      details: { checks },
+  1199→    };
+  1200→  }
+  1201→
+  1202→  /**
+  1203→   * Perform deep health check (all components including dependencies)
+  1204→   * @returns Complete system health status
+  1205→   */
+  1206→  async checkDeepHealth(): Promise<SystemHealth> {
+  1207→    const startTime = Date.now();
+  1208→    const checks: HealthCheckResult[] = [];
+  1209→    
+  1210→    // Run liveness check
+  1211→    checks.push(await this.checkLiveness());
+  1212→    
+  1213→    // Run readiness check
+  1214→    const readiness = await this.checkReadiness();
+  1215→    checks.push(readiness);
+  1216→    
+  1217→    // Run all registered custom health checks
+  1218→    for (const [component, checkFn] of Array.from(this.healthChecks.entries())) {
+  1219→      try {
+  1220→        // Add timeout to prevent hanging checks
+  1221→        const result = await Promise.race([
+  1222→          checkFn(),
+  1223→          new Promise<HealthCheckResult>((resolve) =>
+  1224→            setTimeout(() => resolve({
+  1225→              component,
+  1226→              status: 'unhealthy' as HealthStatus,
+  1227→              message: 'Health check timeout',
+  1228→              timestamp: new Date(),
+  1229→            }), HEALTH_CHECK_TIMEOUT_MS)
+  1230→          ),
+  1231→        ]);
+  1232→        checks.push(result);
+  1233→      } catch (error) {
+  1234→        checks.push({
+  1235→          component,
+  1236→          status: 'unhealthy',
+  1237→          message: 'Health check threw error',
+  1238→          error: error instanceof Error ? error.message : String(error),
+  1239→          timestamp: new Date(),
+  1240→        });
+  1241→      }
+  1242→    }
+  1243→    
+  1244→    // Determine overall status
+  1245→    const statuses = checks.map(c => c.status);
+  1246→    let overallStatus: HealthStatus = 'healthy';
+  1247→    
+  1248→    if (statuses.includes('unhealthy')) {
+  1249→      overallStatus = 'unhealthy';
+  1250→    } else if (statuses.includes('degraded')) {
+  1251→      overallStatus = 'degraded';
+  1252→    } else if (statuses.includes('unknown')) {
+  1253→      overallStatus = 'unknown';
+  1254→    }
+  1255→    
+  1256→    const uptimeSeconds = (Date.now() - APPLICATION_START_TIME) / 1000;
+  1257→    
+  1258→    return {
+  1259→      status: overallStatus,
+  1260→      checks,
+  1261→      uptimeSeconds,
+  1262→      timestamp: new Date(),
+  1263→      version: APP_VERSION,
+  1264→    };
+  1265→  }
+  1266→
+  1267→  /**
+  1268→   * Alias for deep health check
+  1269→   */
+  1270→  async getSystemHealth(): Promise<SystemHealth> {
+  1271→    return this.checkDeepHealth();
+  1272→  }
+  1273→
+  1274→  /**
+  1275→   * Measure event loop lag
+  1276→   * @private
+  1277→   */
+  1278→  private measureEventLoopLag(): Promise<number> {
+  1279→    return new Promise((resolve) => {
+  1280→      const start = process.hrtime.bigint();
+  1281→      setImmediate(() => {
+  1282→        const delta = Number(process.hrtime.bigint() - start) / 1e6; // Convert to ms
+  1283→        resolve(delta);
+  1284→      });
+  1285→    });
+  1286→  }
+  1287→
+  1288→  // ============== Alert Threshold Management ==============
+  1289→
+  1290→  /**
+  1291→   * Create a new alert threshold
+  1292→   * @param options - Alert configuration options
+  1293→   * @returns The created alert threshold
+  1294→   */
+  1295→  createAlert(options: {
+  1296→    id: string;
+  1297→    metricName: string;
+  1298→    condition: AlertThreshold['condition'];
+  1299→    value: number;
+  1300→    severity: AlertSeverity;
+  1301→    timeWindow?: TimeWindow;
+  1302→    description?: string;
+  1303→    onTrigger?: (alert: ActiveAlert) => void;
+  1304→  }): AlertThreshold {
+  1305→    if (this.alerts.has(options.id)) {
+  1306→      throw new AppError(
+  1307→        `Alert '${options.id}' already exists`,
+  1308→        ErrorCode.VALIDATION_ERROR,
+  1309→        { severity: 'warning' }
+  1310→      );
+  1311→    }
+  1312→
+  1313→    const alert: AlertThreshold = {
+  1314→      id: options.id,
+  1315→      metricName: options.metricName,
+  1316→      condition: options.condition,
+  1317→      value: options.value,
+  1318→      severity: options.severity,
+  1319→      isActive: false,
+  1320→      timeWindow: options.timeWindow || '5m',
+  1321→      description: options.description || `Alert when ${options.metricName} ${options.condition} ${options.value}`,
+  1322→      onTrigger: options.onTrigger,
+  1323→      createdAt: new Date(),
+  1324→      triggerCount: 0,
+  1325→    };
+  1326→
+  1327→    this.alerts.set(alert.id, alert);
+  1328→    logger.info(`Created alert: ${options.id}`, { event: 'alert.created', metadata: { alertId: options.id } });
+  1329→    
+  1330→    return alert;
+  1331→  }
+  1332→
+  1333→  /**
+  1334→   * Remove an alert threshold
+  1335→   * @param id - Alert ID to remove
+  1336→   */
+  1337→  removeAlert(id: string): boolean {
+  1338→    const deleted = this.alerts.delete(id);
+  1339→    this.activeAlerts.delete(id);
+  1340→    
+  1341→    if (deleted) {
+  1342→      logger.info(`Removed alert: ${id}`, { event: 'alert.removed', metadata: { alertId: id } });
+  1343→    }
+  1344→    
+  1345→    return deleted;
+  1346→  }
+  1347→
+  1348→  /**
+  1349→   * Evaluate a specific alert against current metric values
+  1350→   * @param alertId - Alert ID to evaluate
+  1351→   * @returns Whether the alert is currently triggering
+  1352→   */
+  1353→  evaluateAlert(alertId: string): boolean {
+  1354→    const alert = this.alerts.get(alertId);
+  1355→    if (!alert) {
+  1356→      return false;
+  1357→    }
+  1358→
+  1359→    const metric = this.metrics.get(alert.metricName);
+  1360→    if (!metric) {
+  1361→      return false;
+  1362→    }
+  1363→
+  1364→    // Get value based on metric type
+  1365→    let currentValue: number;
+  1366→    if (metric.type === 'histogram') {
+  1367→      currentValue = (metric as HistogramMetric).sum / Math.max((metric as HistogramMetric).count, 1);
+  1368→    } else {
+  1369→      currentValue = (metric as CounterMetric | GaugeMetric).value;
+  1370→    }
+  1371→    const isTriggered = this.evaluateCondition(currentValue, alert.condition, alert.value);
+  1372→
+  1373→    if (isTriggered && !alert.isActive) {
+  1374→      // Alert is newly triggered
+  1375→      alert.isActive = true;
+  1376→      alert.lastTriggeredAt = new Date();
+  1377→      alert.triggerCount++;
+  1378→
+  1379→      const activeAlert: ActiveAlert = {
+  1380→        ...alert,
+  1381→        currentValue,
+  1382→        triggeredAt: alert.lastTriggeredAt,
+  1383→      };
+  1384→
+  1385→      this.activeAlerts.set(alertId, activeAlert);
+  1386→
+  1387→      logger.warn(`Alert triggered: ${alertId}`, {
+  1388→        event: 'alert.triggered',
+  1389→        metadata: {
+  1390→          alertId,
+  1391→          metricName: alert.metricName,
+  1392→          currentValue,
+  1393→          threshold: alert.value,
+  1394→          severity: alert.severity,
+  1395→        },
+  1396→      });
+  1397→
+  1398→      // Execute callback if defined
+  1399→      if (alert.onTrigger) {
+  1400→        try {
+  1401→          alert.onTrigger(activeAlert);
+  1402→        } catch (error) {
+  1403→          logger.error('Alert callback execution failed', {
+  1404→            event: 'alert.callback_error',
+  1405→            error: error instanceof Error ? error : new AppError(String(error)),
+  1406→          });
+  1407→        }
+  1408→      }
+  1409→    } else if (!isTriggered && alert.isActive) {
+  1410→      // Alert is resolved
+  1411→      alert.isActive = false;
+  1412→      const activeAlert = this.activeAlerts.get(alertId);
+  1413→      if (activeAlert) {
+  1414→        activeAlert.resolvedAt = new Date();
+  1415→      }
+  1416→
+  1417→      logger.info(`Alert resolved: ${alertId}`, {
+  1418→        event: 'alert.resolved',
+  1419→        metadata: { alertId, resolvedAt: new Date().toISOString() },
+  1420→      });
+  1421→    }
+  1422→
+  1423→    return isTriggered;
+  1424→  }
+  1425→
+  1426→  /**
+  1427→   * Evaluate all registered alerts
+  1428→   * @returns Array of newly triggered alerts
+  1429→   */
+  1430→  evaluateAllAlerts(): ActiveAlert[] {
+  1431→    const newlyTriggered: ActiveAlert[] = [];
+  1432→
+  1433→    for (const alertId of Array.from(this.alerts.keys())) {
+  1434→      const wasActive = this.alerts.get(alertId)?.isActive;
+  1435→      const isTriggered = this.evaluateAlert(alertId);
+  1436→      
+  1437→      if (isTriggered && !wasActive) {
+  1438→        const active = this.activeAlerts.get(alertId);
+  1439→        if (active) {
+  1440→          newlyTriggered.push(active);
+  1441→        }
+  1442→      }
+  1443→    }
+  1444→
+  1445→    return newlyTriggered;
+  1446→  }
+  1447→
+  1448→  /**
+  1449→   * Get all active alerts
+  1450→   * @returns Array of currently active alerts
+  1451→   */
+  1452→  getActiveAlerts(): ActiveAlert[] {
+  1453→    return Array.from(this.activeAlerts.values());
+  1454→  }
+  1455→
+  1456→  /**
+  1457→   * Get all registered alert thresholds
+  1458→   * @returns Array of alert configurations
+  1459→   */
+  1460→  getAllAlerts(): AlertThreshold[] {
+  1461→    return Array.from(this.alerts.values());
+  1462→  }
+  1463→
+  1464→  /**
+  1465→   * Evaluate numeric condition
+  1466→   * @private
+  1467→   */
+  1468→  private evaluateCondition(value: number, condition: string, threshold: number): boolean {
+  1469→    switch (condition) {
+  1470→      case 'gt': return value > threshold;
+  1471→      case 'lt': return value < threshold;
+  1472→      case 'gte': return value >= threshold;
+  1473→      case 'lte': return value <= threshold;
+  1474→      case 'eq': return value === threshold;
+  1475→      default: return false;
+  1476→    }
+  1477→  }
+  1478→
+  1479→  // ============== Dashboard Data Generation ==============
+  1480→
+  1481→  /**
+  1482→   * Generate complete dashboard state
+  1483→   * @param timeRange - Time range for data
+  1484→   * @returns Complete dashboard state
+  1485→   */
+  1486→  generateDashboard(timeRange: TimeWindow = '1h'): DashboardState {
+  1487→    const widgets: DashboardWidget[] = [];
+  1488→    
+  1489→    // Request overview widget
+  1490→    widgets.push(this.generateRequestWidget(timeRange));
+  1491→    
+  1492→    // Performance widget
+  1493→    widgets.push(this.generatePerformanceWidget(timeRange));
+  1494→    
+  1495→    // Error rate widget
+  1496→    widgets.push(this.getErrorRateWidget(timeRange));
+  1497→    
+  1498→    // Health status widget
+  1499→    widgets.push(this.getHealthStatusWidget());
+  1500→    
+  1501→    // Active alerts widget
+  1502→    widgets.push(this.getActiveAlertsWidget());
+  1503→    
+  1504→    // Determine overall status
+  1505→    const activeAlerts = this.getActiveAlerts();
+  1506→    const criticalAlerts = activeAlerts.filter(a => a.severity === 'critical');
+  1507→    
+  1508→    let overallStatus: HealthStatus = 'healthy';
+  1509→    if (criticalAlerts.length > 0) {
+  1510→      overallStatus = 'unhealthy';
+  1511→    } else if (activeAlerts.some(a => a.severity === 'warning')) {
+  1512→      overallStatus = 'degraded';
+  1513→    }
+  1514→    
+  1515→    return {
+  1516→      generatedAt: new Date(),
+  1517→      widgets,
+  1518→      activeAlertsCount: activeAlerts.length,
+  1519→      overallStatus,
+  1520→      timeRange,
+  1521→    };
+  1522→  }
+  1523→
+  1524→  /**
+  1525→   * Generate request overview widget
+  1526→   * @private
+  1527→   */
+  1528→  private generateRequestWidget(timeRange: TimeWindow): DashboardWidget {
+  1529→    const totalRequests = this.getCounterValue('http_requests_total');
+  1530→    const successRequests = this.getCounterValue('http_requests_success_total');
+  1531→    const errorRequests = this.getCounterValue('http_requests_error_total');
+  1532→    
+  1533→    return {
+  1534→      id: 'requests_overview',
+  1535→      title: 'Request Overview',
+  1536→      type: 'counter',
+  1537→      metrics: ['http_requests_total', 'http_requests_success_total', 'http_requests_error_total'],
+  1538→      data: this.getHistoricalData('http_requests_total', timeRange),
+  1539→      currentValue: totalRequests,
+  1540→      unit: 'requests',
+  1541→      refreshInterval: 30,
+  1542→    };
+  1543→  }
+  1544→
+  1545→  /**
+  1546→   * Generate performance widget
+  1547→   * @private
+  1548→   */
+  1549→  private generatePerformanceWidget(timeRange: TimeWindow): DashboardWidget {
+  1550→    const httpStats = this.getPerformanceStats('http_request', { window: timeRange });
+  1551→    
+  1552→    return {
+  1553→      id: 'performance',
+  1554→      title: 'API Performance',
+  1555→      type: 'line',
+  1556→      metrics: ['http_request_duration_ms'],
+  1557→      data: this.getHistoricalData('http_request_duration_ms_raw', timeRange),
+  1558→      currentValue: httpStats.avgDurationMs,
+  1559→      unit: 'ms',
+  1560→      refreshInterval: 15,
+  1561→    };
+  1562→  }
+  1563→
+  1564→  /**
+  1565→   * Generate error rate widget
+  1566→   * @private
+  1567→   */
+  1568→  private getErrorRateWidget(timeRange: TimeWindow): DashboardWidget {
+  1569→    const errorRates = this.getErrorRates(timeRange);
+  1570→    const totalErrors = errorRates.reduce((sum, e) => sum + e.count, 0);
+  1571→    
+  1572→    return {
+  1573→      id: 'error_rates',
+  1574→      title: 'Error Rates',
+  1575→      type: 'bar',
+  1576→      metrics: ['errors_total'],
+  1577→      data: errorRates.slice(0, 10).map(e => ({
+  1578→        timestamp: new Date(),
+  1579→        value: e.rate,
+  1580→        label: e.errorCode,
+  1581→      })),
+  1582→      currentValue: totalErrors,
+  1583→      unit: 'errors/min',
+  1584→      refreshInterval: 60,
+  1585→    };
+  1586→  }
+  1587→
+  1588→  /**
+  1589→   * Generate health status widget
+  1590→   * @private
+  1591→   */
+  1592→  private getHealthStatusWidget(): DashboardWidget {
+  1593→    // Use cached health or return unknown
+  1594→    const status: HealthStatus = 'unknown'; // Will be updated on actual check
+  1595→    
+  1596→    return {
+  1597→      id: 'health_status',
+  1598→      title: 'System Health',
+  1599→      type: 'status',
+  1600→      metrics: [],
+  1601→      data: [],
+  1602→      status: status,
+  1603→      refreshInterval: 30,
+  1604→    };
+  1605→  }
+  1606→
+  1607→  /**
+  1608→   * Generate active alerts widget
+  1609→   * @private
+  1610→   */
+  1611→  private getActiveAlertsWidget(): DashboardWidget {
+  1612→    const activeAlerts = this.getActiveAlerts();
+  1613→    
+  1614→    return {
+  1615→      id: 'active_alerts',
+  1616→      title: 'Active Alerts',
+  1617→      type: 'table',
+  1618→      metrics: [],
+  1619→      data: activeAlerts.map(a => ({
+  1620→        timestamp: a.triggeredAt,
+  1621→        value: a.currentValue,
+  1622→        label: `${a.id} (${a.severity})`,
+  1623→      })),
+  1624→      currentValue: activeAlerts.length,
+  1625→      unit: 'alerts',
+  1626→      refreshInterval: 10,
+  1627→    };
+  1628→  }
+  1629→
+  1630→  // ============== Utility Methods ==============
+  1631→
+  1632→  /**
+  1633→   * Get all registered metrics
+  1634→   * @returns Array of all metrics
+  1635→   */
+  1636→  getAllMetrics(): Metric[] {
+  1637→    return Array.from(this.metrics.values());
+  1638→  }
+  1639→
+  1640→  /**
+  1641→   * Get a specific metric by name
+  1642→   * @param name - Metric name
+  1643→   * @returns Metric or undefined
+  1644→   */
+  1645→  getMetric(name: string): Metric | undefined {
+  1646→    return this.metrics.get(name);
+  1647→  }
+  1648→
+  1649→  /**
+  1650→   * Remove a metric
+  1651→   * @param name - Metric name to remove
+  1652→   * @returns True if metric was removed
+  1653→   */
+  1654→  removeMetric(name: string): boolean {
+  1655→    return this.metrics.delete(name);
+  1656→  }
+  1657→
+  1658→  /**
+  1659→   * Reset a metric to initial state
+  1660→   * @param name - Metric name to reset
+  1661→   * @throws {AppError} If metric doesn't exist
+  1662→   */
+  1663→  resetMetric(name: string): void {
+  1664→    const metric = this.metrics.get(name);
+  1665→    
+  1666→    if (!metric) {
+  1667→      throw new AppError(
+  1668→        `Metric '${name}' does not exist`,
+  1669→        ErrorCode.VALIDATION_ERROR,
+  1670→        { severity: 'warning' }
+  1671→      );
+  1672→    }
+  1673→
+  1674→    switch (metric.type) {
+  1675→      case 'counter':
+  1676→        metric.value = 0;
+  1677→        metric.totalIncrements = 0;
+  1678→        break;
+  1679→      case 'gauge':
+  1680→        metric.value = 0;
+  1681→        metric.min = Infinity;
+  1682→        metric.max = -Infinity;
+  1683→        break;
+  1684→      case 'histogram':
+  1685→        metric.count = 0;
+  1686→        metric.sum = 0;
+  1687→        metric.buckets.forEach(b => b.count = 0);
+  1688→        delete metric.percentiles;
+  1689→        break;
+  1690→    }
+  1691→    
+  1692→    metric.updatedAt = new Date();
+  1693→    
+  1694→    logger.debug(`Reset metric: ${name}`, { event: 'metric.reset', metadata: { name } });
+  1695→  }
+  1696→
+  1697→  /**
+  1698→   * Reset all metrics to initial state
+  1699→   */
+  1700→  resetAllMetrics(): void {
+  1701→    for (const name of Array.from(this.metrics.keys())) {
+  1702→      try {
+  1703→        this.resetMetric(name);
+  1704→      } catch {
+  1705→        // Continue resetting other metrics
+  1706→      }
+  1707→    }
+  1708→    
+  1709→    logger.info('All metrics have been reset', { event: 'metrics.reset_all' });
+  1710→  }
+  1711→
+  1712→  /**
+  1713→   * Export all metrics in Prometheus format
+  1714→   * @returns Prometheus-compatible text format
+  1715→   */
+  1716→  exportPrometheusFormat(): string {
+  1717→    const lines: string[] = [];
+  1718→    lines.push('# SSM-Pay Metrics Export');
+  1719→    lines.push(`# Generated at: ${new Date().toISOString()}`);
+  1720→    lines.push('');
+  1721→    
+  1722→    for (const metric of Array.from(this.metrics.values())) {
+  1723→      // Help text
+  1724→      lines.push(`# HELP ${metric.name} ${metric.description}`);
+  1725→      lines.push(`# TYPE ${metric.name} ${metric.type}`);
+  1726→      
+  1727→      // Labels string
+  1728→      const labelsStr = Object.entries(metric.labels)
+  1729→        .map(([k, v]) => `${k}="${v}"`)
+  1730→        .join(',');
+  1731→      
+  1732→      switch (metric.type) {
+  1733→        case 'counter':
+  1734→        case 'gauge':
+  1735→          lines.push(`${metric.name}{${labelsStr}} ${metric.value}`);
+  1736→          break;
+  1737→        case 'histogram':
+  1738→          // Output buckets
+  1739→          const hist = metric as HistogramMetric;
+  1740→          for (const bucket of hist.buckets) {
+  1741→            lines.push(`${metric.name}_bucket{${labelsStr},le="${bucket.upperBound}"} ${bucket.count}`);
+  1742→          }
+  1743→          lines.push(`${metric.name}_bucket{${labelsStr},le="+Inf"} ${hist.count}`);
+  1744→          lines.push(`${metric.name}_sum{${labelsStr}} ${hist.sum}`);
+  1745→          lines.push(`${metric.name}_count{${labelsStr}} ${hist.count}`);
+  1746→          break;
+  1747→      }
+  1748→      
+  1749→      lines.push('');
+  1750→    }
+  1751→    
+  1752→    return lines.join('\n');
+  1753→  }
+  1754→
+  1755→  /**
+  1756→   * Export metrics as JSON object
+  1757→   * @returns JSON-serializable metrics object
+  1758→   */
+  1759→  exportJSON(): Record<string, unknown> {
+  1760→    const exportData: Record<string, unknown> = {
+  1761→      exportedAt: new Date().toISOString(),
+  1762→      metrics: {},
+  1763→      health: {
+  1764→        uptimeSeconds: (Date.now() - APPLICATION_START_TIME) / 1000,
+  1765→        version: APP_VERSION,
+  1766→      },
+  1767→    };
+  1768→    
+  1769→    for (const [name, metric] of Array.from(this.metrics.entries())) {
+  1770→      (exportData.metrics as Record<string, unknown>)[name] = metric;
+  1771→    }
+  1772→    
+  1773→    return exportData;
+  1774→  }
+  1775→
+  1776→  /**
+  1777→   * Record a historical data point
+  1778→   * @private
+  1779→   */
+  1780→  private recordHistoricalDataPoint(metricName: string, value: number): void {
+  1781→    const dataPoints = this.historicalData.get(metricName) || [];
+  1782→    
+  1783→    dataPoints.push({
+  1784→      timestamp: new Date(),
+  1785→      value,
+  1786→    });
+  1787→    
+  1788→    // Trim to max size
+  1789→    if (dataPoints.length > MAX_DATA_POINTS_PER_METRIC) {
+  1790→      dataPoints.splice(0, dataPoints.length - MAX_DATA_POINTS_PER_METRIC);
+  1791→    }
+  1792→    
+  1793→    this.historicalData.set(metricName, dataPoints);
+  1794→  }
+  1795→
+  1796→  /**
+  1797→   * Get historical data for a metric
+  1798→   * @private
+  1799→   */
+  1800→  private getHistoricalData(metricName: string, timeRange: TimeWindow): DashboardDataPoint[] {
+  1801→    const dataPoints = this.historicalData.get(metricName) || [];
+  1802→    const { startTime, endTime } = this.getTimeBounds(timeRange);
+  1803→    
+  1804→    return dataPoints.filter(d => d.timestamp >= startTime && d.timestamp <= endTime);
+  1805→  }
+  1806→
+  1807→  /**
+  1808→   * Get time bounds for a given window
+  1809→   * @private
+  1810→   */
+  1811→  private getTimeBounds(
+  1812→    window: TimeWindow,
+  1813→    startTime?: Date,
+  1814→    endTime?: Date
+  1815→  ): { startTime: Date; endTime: Date } {
+  1816→    const end = endTime || new Date();
+  1817→    const start = startTime || new Date(end.getTime() - this.getWindowMs(window));
+  1818→    
+  1819→    return { startTime: start, endTime: end };
+  1820→  }
+  1821→
+  1822→  /**
+  1823→   * Convert time window to milliseconds
+  1824→   * @private
+  1825→   */
+  1826→  private getWindowMs(window: TimeWindow): number {
+  1827→    const multipliers: Record<TimeWindow, number> = {
+  1828→      '1m': 60 * 1000,
+  1829→      '5m': 5 * 60 * 1000,
+  1830→      '15m': 15 * 60 * 1000,
+  1831→      '1h': 60 * 60 * 1000,
+  1832→      '6h': 6 * 60 * 60 * 1000,
+  1833→      '24h': 24 * 60 * 60 * 1000,
+  1834→      '7d': 7 * 24 * 60 * 60 * 1000,
+  1835→    };
+  1836→    
+  1837→    return multipliers[window];
+  1838→  }
+  1839→
+  1840→  /**
+  1841→   * Convert time window to minutes
+  1842→   * @private
+  1843→   */
+  1844→  private getWindowMinutes(window: TimeWindow): number {
+  1845→    return this.getWindowMs(window) / (60 * 1000);
+  1846→  }
+  1847→
+  1848→  /**
+  1849→   * Shutdown the monitoring service
+  1850→   * Cleans up intervals and resources
+  1851→   */
+  1852→  shutdown(): void {
+  1853→    if (this.cleanupInterval) {
+  1854→      clearInterval(this.cleanupInterval);
+  1855→      this.cleanupInterval = null;
+  1856→    }
+  1857→    
+  1858→    logger.info('Monitoring service shut down', { event: 'monitoring.shutdown' });
+  1859→    this.initialized = false;
+  1860→  }
+  1861→}
+  1862→
+  1863→// ============== Singleton Export ==============
+  1864→
+  1865→/**
+  1866→ * Global monitoring service singleton instance
+  1867→ * Use this instance throughout the application for all monitoring operations
+  1868→ */
+  1869→export const monitoringService = new MonitoringService();
+  1870→
+  1871→// Auto-initialize in non-test environments
+  1872→if (process.env.NODE_ENV !== 'test') {
+  1873→  monitoringService.initialize();
+  1874→}
+  1875→
+  1876→// Export default for convenience
+  1877→export default monitoringService;
+  1878→
+  1879→// ============== Utility Functions ==============
+  1880→
+  1881→/**
+  1882→ * Decorator factory for automatic performance tracking
+  1883→ * Can be used to wrap methods for automatic timing
+  1884→ * 
+  1885→ * @example
+  1886→ * ```typescript
+  1887→ * class PaymentService {
+  1888→ *   @trackPerformance('payment.process')
+  1889→ *   async processPayment(amount: number) {
+  1890→ *     // Method implementation
+  1891→ *   }
+  1892→ * }
+  1893→ * ```
+  1894→ */
+  1895→export function trackPerformance(operation: string) {
+  1896→  return function (
+  1897→    target: unknown,
+  1898→    propertyKey: string,
+  1899→    descriptor: PropertyDescriptor
+  1900→  ): PropertyDescriptor {
+  1901→    const originalMethod = descriptor.value;
+  1902→    
+  1903→    descriptor.value = async function (...args: unknown[]) {
+  1904→      const endTimer = monitoringService.startTimer(operation);
+  1905→      
+  1906→      try {
+  1907→        const result = await originalMethod.apply(this, args);
+  1908→        endTimer({ success: true });
+  1909→        return result;
+  1910→      } catch (error) {
+  1911→        endTimer({
+  1912→          success: false,
+  1913→          error: error instanceof Error ? error.message : String(error),
+  1914→        });
+  1915→        throw error;
+  1916→      }
+  1917→    };
+  1918→    
+  1919→    return descriptor;
+  1920→  };
+  1921→}
+  1922→
+  1923→/**
+  1924→ * Higher-order function for wrapping async operations with performance tracking
+  1925→ * 
+  1926→ * @param operation - Operation name for tracking
+  1927→ * @param fn - Async function to wrap
+  1928→ * @returns Wrapped function with automatic tracking
+  1929→ * 
+  1930→ * @example
+  1931→ * ```typescript
+  1932→ * const trackedCall = trackAsyncOperation('db.query', () => database.query(sql));
+  1933→ * const result = await trackedCall();
+  1934→ * ```
+  1935→ */
+  1936→export async function trackAsyncOperation<T>(
+  1937→  operation: string,
+  1938→  fn: () => Promise<T>
+  1939→): Promise<T> {
+  1940→  const endTimer = monitoringService.startTimer(operation);
+  1941→  
+  1942→  try {
+  1943→    const result = await fn();
+  1944→    endTimer({ success: true });
+  1945→    return result;
+  1946→  } catch (error) {
+  1947→    endTimer({
+  1948→      success: false,
+  1949→      error: error instanceof Error ? error.message : String(error),
+  1950→    });
+  1951→    throw error;
+  1952→  }
+  1953→}
+  1954→

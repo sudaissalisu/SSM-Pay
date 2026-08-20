@@ -1,0 +1,2002 @@
+     1→     1→/**
+     2→     2→ * Enterprise-Grade Anomaly Detection Module for SSM-Pay Payment Platform
+     3→     3→ * 
+     4→     4→ * @module ml/anomaly-detector
+     5→     5→ * @description Comprehensive ML-based anomaly detection system providing multiple detection
+     6→     6→ * algorithms including statistical outlier detection, time series analysis, behavioral profiling,
+     7→     7→ * geographic analysis, device fingerprinting, and real-time streaming detection.
+     8→     8→ * 
+     9→     9→ * @features
+    10→    10→ * - Z-Score, IQR, and Modified Z-Score statistical methods
+    11→    11→ * - Time series decomposition and trend analysis
+    12→    12→ * - User behavioral pattern recognition
+    13→    13→ * - Geographic velocity and location anomaly detection
+    14→    14→ * - Device fingerprint risk assessment
+    15→    15→ * - Real-time streaming with sliding window analysis
+    16→    16→ * - Configurable thresholds and sensitivity levels
+    17→    17→ * 
+    18→    18→ * @example
+    19→    19→ * ```typescript
+    20→    20→ * import { AnomalyDetector } from '@/lib/ml/anomaly-detector';
+    21→    21→ * 
+    22→    22→ * const detector = new AnomalyDetector({
+    23→    23→ *   sensitivity: 'medium',
+    24→    24→ *   enableRealTimeDetection: true,
+    25→    25→ * });
+    26→    26→ * 
+    27→    27→ * const result = await detector.analyzeTransaction(transactionData);
+    28→    28→ * if (result.isAnomalous) {
+    29→    29→ *   // Handle anomaly
+    30→    30→ * }
+    31→    31→ * ```
+    32→    32→ */
+    33→    33→
+    34→    34→import { logger } from '@/lib/logger';
+    35→    35→import { AppError, ErrorCode } from '@/lib/errors';
+    36→    36→
+    37→    37→// ============== Enumerations ==============
+    38→    38→
+    39→    39→/**
+    40→    40→ * Sensitivity levels for anomaly detection tuning
+    41→    41→ * @enum {string}
+    42→    42→ */
+    43→    43→export enum SensitivityLevel {
+    44→    44→  /** Low sensitivity - fewer false positives, may miss subtle anomalies */
+    45→    45→  LOW = 'low',
+    46→    46→  /** Medium sensitivity - balanced detection */
+    47→    47→  MEDIUM = 'medium',
+    48→    48→  /** High sensitivity - catches more anomalies, higher false positive rate */
+    49→    49→  HIGH = 'high',
+    50→    50→  /** Very high sensitivity - maximum detection, use for high-risk scenarios */
+    51→    51→  VERY_HIGH = 'very_high'
+    52→    52→}
+    53→    53→
+    54→    54→/**
+    55→    55→ * Categories of anomalies that can be detected
+    56→    56→ * @enum {string}
+    57→    57→ */
+    58→    58→export enum AnomalyCategory {
+    59→    59→  /** Statistical outliers in numerical data */
+    60→    60→  STATISTICAL = 'statistical',
+    61→    61→  /** Time-based pattern deviations */
+    62→    62→  TEMPORAL = 'temporal',
+    63→    63→  /** Behavioral pattern deviations */
+    64→    64→  BEHAVIORAL = 'behavioral',
+    65→    65→  /** Location-based anomalies */
+    66→    66→  GEOGRAPHIC = 'geographic',
+    67→    67→  /** Device-related anomalies */
+    68→    68→  DEVICE = 'device',
+    69→    69→  /** Velocity/rate-based anomalies */
+    70→    70→  VELOCITY = 'velocity',
+    71→    71→  /** Amount-based anomalies */
+    72→    72→  AMOUNT = 'amount'
+    73→    73→}
+    74→    74→
+    75→    75→/**
+    76→    76→ * Severity levels for detected anomalies
+    77→    77→ * @enum {string}
+    78→    78→ */
+    79→    79→export enum AnomalySeverity {
+    80→    80→  /** Informational - minor deviation, likely benign */
+    81→    81→  INFO = 'info',
+    82→    82→  /** Low severity - worth monitoring */
+    83→    83→  LOW = 'low',
+    84→    84→  /** Medium severity - requires attention */
+    85→    85→  MEDIUM = 'medium',
+    86→    86→  /** High severity - immediate review needed */
+    87→    87→  HIGH = 'high',
+    88→    88→  /** Critical severity - block and investigate immediately */
+    89→    89→  CRITICAL = 'critical'
+    90→    90→}
+    91→    91→
+    92→    92→/**
+    93→    93→ * Types of statistical methods available
+    94→    94→ * @enum {string}
+    95→    95→ */
+    96→    96→export enum StatisticalMethod {
+    97→    97→  /** Standard Z-Score analysis */
+    98→    98→  Z_SCORE = 'z_score',
+    99→    99→  /** Interquartile Range method */
+   100→   100→  IQR = 'iqr',
+   101→   101→  /** Modified Z-Score using MAD */
+   102→   102→  MODIFIED_Z_SCORE = 'modified_z_score',
+   103→   103→  /** Combination of all methods */
+   104→   104→  HYBRID = 'hybrid'
+   105→   105→}
+   106→   106→
+   107→   107→// ============== Interfaces ==============
+   108→   108→
+   109→   109→/**
+   110→   110→ * Configuration options for the anomaly detector
+   111→   111→ * @interface AnomalyDetectorConfig
+   112→   112→ */
+   113→   113→export interface AnomalyDetectorConfig {
+   114→   114→  /** Detection sensitivity level */
+   115→   115→  sensitivity?: SensitivityLevel;
+   116→   116→  /** Enable real-time streaming detection */
+   117→   117→  enableRealTimeDetection?: boolean;
+   118→   118→  /** Window size for time series analysis (in data points) */
+   119→   119→  timeSeriesWindowSize?: number;
+   120→   120→  /** Sliding window size for real-time detection (in milliseconds) */
+   121→   121→  realtimeWindowMs?: number;
+   122→   122→  /** Maximum number of historical data points to retain */
+   123→   123→  maxHistorySize?: number;
+   124→   124→  /** Enable behavioral profiling */
+   125→   125→  enableBehavioralAnalysis?: boolean;
+   126→   126→  /** Enable geographic analysis */
+   127→   127→  enableGeographicAnalysis?: boolean;
+   128→   128→  /** Enable device fingerprinting */
+   129→   129→  enableDeviceAnalysis?: boolean;
+   130→   130→  /** Custom threshold overrides */
+   131→   131→  customThresholds?: Partial<ThresholdConfig>;
+   132→   132→  /** Enable adaptive thresholds that adjust based on historical data */
+   133→   133→  adaptiveThresholds?: boolean;
+   134→   134→  /** Minimum number of samples required before making predictions */
+   135→   135→  minSamplesRequired?: number;
+   136→   136→}
+   137→   137→
+   138→   138→/**
+   139→   139→ * Threshold configuration for various detection methods
+   140→   140→ * @interface ThresholdConfig
+   141→   141→ */
+   142→   142→export interface ThresholdConfig {
+   143→   143→  /** Z-Score threshold for statistical outliers */
+   144→   144→  zScoreThreshold: number;
+   145→   145→  /** IQR multiplier for outlier detection */
+   146→   146→  iqrMultiplier: number;
+   147→   147→  /** Modified Z-Score threshold */
+   148→   148→  modifiedZScoreThreshold: number;
+   149→   149→  /** Maximum allowed velocity (transactions per minute) */
+   150→   150→  maxVelocityPerMinute: number;
+   151→   151→  /** Maximum allowed velocity per hour */
+   152→   152→  maxVelocityPerHour: number;
+   153→   153→  /** Maximum distance between consecutive transactions (km) */
+   154→   154→  maxGeoDistanceKm: number;
+   155→   155→  /** Minimum time between distant locations (minutes) */
+   156→   156→  minTimeForDistanceMinutes: number;
+   157→   157→  /** Amount deviation percentage threshold */
+   158→   158→  amountDeviationPercent: number;
+   159→   159→  /** Time deviation threshold (standard deviations) */
+   160→   160→  timeDeviationStd: number;
+   161→   161→  /** New device risk score threshold */
+   162→   162→  newDeviceRiskThreshold: number;
+   163→   163→  /** New location risk score threshold */
+   164→   164→  newLocationRiskThreshold: number;
+   165→   165→}
+   166→   166→
+   167→   167→/**
+   168→   168→ * Core transaction data structure for analysis
+   169→   169→ * @interface TransactionData
+   170→   170→ */
+   171→   171→export interface TransactionData {
+   172→   172→  /** Unique transaction identifier */
+   173→   173→  transactionId: string;
+   174→   174→  /** Transaction amount in smallest currency unit (e.g., kobo) */
+   175→   175→  amount: number;
+   176→   176→  /** ISO 4217 currency code */
+   177→   177→  currency: string;
+   178→   178→  /** Transaction timestamp */
+   179→   179→  timestamp: Date;
+   180→   180→  /** Customer unique identifier (hashed) */
+   181→   181→  customerId: string;
+   182→   182→  /** Device fingerprint hash */
+   183→   183→  deviceFingerprint: string;
+   184→   184→  /** IP address (anonymized) */
+   185→   185→  ipAddress: string;
+   186→   186→  /** ISO 3166-1 alpha-2 country code */
+   187→   187→  countryCode: string;
+   188→   188→  /** Latitude coordinate (if available) */
+   189→   189→  latitude?: number;
+   190→   190→  /** Longitude coordinate (if available) */
+   191→   191→  longitude?: number;
+   192→   192→  /** Payment method used */
+   193→   193→  paymentMethod: PaymentMethodType;
+   194→   194→  /** Card BIN (first 6 digits) if card payment */
+   195→   195→  cardBin?: string;
+   196→   196→  /** Merchant identifier */
+   197→   197→  merchantId: string;
+   198→   198→  /** Merchant category code */
+   199→   199→  mcc: string;
+   200→   200→  /** Channel through which transaction was initiated */
+   201→   201→  channel: ChannelType;
+   202→   202→  /** User agent string (hashed) */
+   203→   203→  userAgent?: string;
+   204→   204→  /** Session identifier */
+   205→   205→  sessionId: string;
+   206→   206→}
+   207→   207→
+   208→   208→/**
+   209→   209→ * Supported payment method types
+   210→   210→ * @type PaymentMethodType
+   211→   211→ */
+   212→   212→export type PaymentMethodType = 
+   213→   213→  | 'card' 
+   214→   214→  | 'bank_transfer' 
+   215→   215→  | 'wallet' 
+   216→   216→  | 'ussd' 
+   217→   217→  | 'qr_code' 
+   218→   218→  | 'bank_debit';
+   219→   219→
+   220→   220→/**
+   221→   221→ * Supported channel types
+   222→   222→ * @type ChannelType
+   223→   223→ */
+   224→   224→export type ChannelType = 
+   225→   225→  | 'web' 
+   226→   226→  | 'mobile_web' 
+   227→   227→  | 'ios_app' 
+   228→   228→  | 'android_app' 
+   229→   229→  | 'api' 
+   230→   230→  | 'pos';
+   231→   231→
+   232→   232→/**
+   233→   233→ * Historical user profile for behavioral analysis
+   234→   234→ * @interface UserProfile
+   235→   235→ */
+   236→   236→export interface UserProfile {
+   237→   237→  /** Customer unique identifier */
+   238→   238→  customerId: string;
+   239→   239→  /** Average transaction amount */
+   240→   240→  avgAmount: number;
+   241→   241→  /** Standard deviation of transaction amounts */
+   242→   242→  stdAmount: number;
+   243→   243→  /** Median transaction amount */
+   244→   244→  medianAmount: number;
+   245→   245→  /** Typical transaction hours (0-23) */
+   246→   246→  typicalHours: number[];
+   247→   247→  /** Typical days of week (0-6, Sunday=0) */
+   248→   248→  typicalDays: number[];
+   249→   249→  /** Known device fingerprints */
+   250→   250→  knownDevices: Set<string>;
+   251→   251→  /** Known locations (country codes) */
+   252→   252→  knownLocations: Set<string>;
+   253→   253→  /** Known IP addresses */
+   254→   254→  knownIpAddresses: Set<string>;
+   255→   255→  /** Preferred payment methods */
+   256→   256→  preferredMethods: Set<PaymentMethodType>;
+   257→   257→  /** Account age in days */
+   258→   258→  accountAgeDays: number;
+   259→   259→  /** Total transaction count */
+   260→   260→  totalTransactions: number;
+   261→   261→  /** Last transaction timestamp */
+   262→   262→  lastTransactionDate: Date;
+   263→   263→  /** Average time between transactions (minutes) */
+   264→   264→  avgTimeBetweenTxnMinutes: number;
+   265→   265→  /** Velocity score (avg transactions per day) */
+   266→   266→  dailyVelocity: number;
+   267→   267→}
+   268→   268→
+   269→   269→/**
+   270→   270→ * Device profile for fingerprint analysis
+   271→   271→ * @interface DeviceProfile
+   272→   272→ */
+   273→   273→export interface DeviceProfile {
+   274→   274→  /** Device fingerprint hash */
+   275→   275→  fingerprint: string;
+   276→   276→  /** First seen timestamp */
+   277→   277→  firstSeen: Date;
+   278→   278→  /** Last seen timestamp */
+   279→   279→  lastSeen: Date;
+   280→   280→  /** Total transactions from this device */
+   281→   281→  transactionCount: number;
+   282→   282→  /** Unique customers who used this device */
+   283→   283→  uniqueCustomers: number;
+   284→   284→  /** Associated customer IDs */
+   285→   285→  customerIds: Set<string>;
+   286→   286→  /** Risk score (0-100) */
+   287→   287→  riskScore: number;
+   288→   288→  /** Is this a known fraudulent device? */
+   289→   289→  isFlagged: boolean;
+   290→   290→  /** Device attributes for comparison */
+   291→   291→  attributes?: DeviceAttributes;
+   292→   292→}
+   293→   293→
+   294→   294→/**
+   295→   295→ * Device attributes for fingerprinting
+   296→   296→ * @interface DeviceAttributes
+   297→   297→ */
+   298→   298→export interface DeviceAttributes {
+   299→   299→  /** Browser/user-agent hash */
+   300→   300→  browserHash?: string;
+   301→   301→  /** Screen resolution */
+   302→   302→  screenResolution?: string;
+   303→   303→  /** Timezone */
+   304→   304→  timezone?: string;
+   305→   305→  /** Language preference */
+   306→   306→  language?: string;
+   307→   307→  /** Platform/OS */
+   308→   308→  platform?: string;
+   309→   309→  /** Number of cores (if available) */
+   310→   310→  hardwareConcurrency?: number;
+   311→   311→  /** Device memory (if available) */
+   312→   312→  deviceMemory?: number;
+   313→   313→  /** Touch support */
+   314→   314→  touchSupport?: boolean;
+   315→   315→  /** WebGL vendor */
+   316→   316→  webglVendor?: string;
+   317→   317→  /** WebGL renderer */
+   318→   318→  webglRenderer?: string;
+   319→   319→}
+   320→   320→
+   321→   321→/**
+   322→   322→ * Geographic data point for location analysis
+   323→   323→ * @interface GeoPoint
+   324→   324→ */
+   325→   325→export interface GeoPoint {
+   326→   326→  /** Latitude coordinate */
+   327→   327→  latitude: number;
+   328→   328→  /** Longitude coordinate */
+   329→   329→  longitude: number;
+   330→   330→  /** Country code */
+   331→   331→  countryCode: string;
+   332→   332→  /** City name (if available) */
+   333→   333→  city?: string;
+   334→   334→  /** Region/state (if available) */
+   335→   335→  region?: string;
+   336→   336→  /** Timestamp of this location data */
+   337→   337→  timestamp: Date;
+   338→   338→}
+   339→   339→
+   340→   340→/**
+   341→   341→ * Time series data point
+   342→   342→ * @interface TimeSeriesPoint
+   343→   343→ */
+   344→   344→export interface TimeSeriesPoint {
+   345→   345→  /** Timestamp of the data point */
+   346→   346→  timestamp: Date;
+   347→   347→  /** Value at this timestamp */
+   348→   348→  value: number;
+   349→   349→  /** Optional metadata */
+   350→   350→  metadata?: Record<string, unknown>;
+   351→   351→}
+   352→   352→
+   353→   353→/**
+   354→   354→ * Result of anomaly analysis for a single detection method
+   355→   355→ * @interface DetectionResult
+   356→   356→ */
+   357→   357→export interface DetectionResult {
+   358→   358→  /** Whether an anomaly was detected */
+   359→   359→  isAnomalous: boolean;
+   360→   360→  /** Anomaly category */
+   361→   361→  category: AnomalyCategory;
+   362→   362→  /** Severity level */
+   363→   363→  severity: AnomalySeverity;
+   364→   364→  /** Confidence score (0-1) */
+   365→   365→  confidence: number;
+   366→   366→  /** Score representing degree of anomaly */
+   367→   367→  score: number;
+   368→   368→  /** Threshold that was exceeded */
+   369→   369→  threshold: number;
+   370→   370→  /** Actual value that triggered the detection */
+   371→   371→  actualValue: number;
+   372→   372→  /** Human-readable description */
+   373→   373→  description: string;
+   374→   374→  /** Additional details about the detection */
+   375→   375→  details?: Record<string, unknown>;
+   376→   376→  /** Timestamp of detection */
+   377→   377→  detectedAt: Date;
+   378→   378→}
+   379→   379→
+   380→   380→/**
+   381→   381→ * Comprehensive analysis result combining all detection methods
+   382→   382→ * @interface AnomalyAnalysisResult
+   383→   383→ */
+   384→   384→export interface AnomalyAnalysisResult {
+   385→   385→  /** Overall whether transaction is anomalous */
+   386→   386→  isAnomalous: boolean;
+   387→   387→  /** Overall risk score (0-100) */
+   388→   388→  riskScore: number;
+   389→   389→  /** Overall severity level */
+   390→   390→  overallSeverity: AnomalySeverity;
+   391→   391→  /** Individual detection results */
+   392→   392→  detections: DetectionResult[];
+   393→   393→  /** Combined risk factors */
+   394→   394→  riskFactors: string[];
+   395→   395→  /** Recommended action */
+   396→   396→  recommendedAction: RecommendedAction;
+   397→   397→  /** Analysis metadata */
+   398→   398→  metadata: AnalysisMetadata;
+   399→   399→  /** Timestamp of analysis */
+   400→   400→  analyzedAt: Date;
+   401→   401→}
+   402→   402→
+   403→   403→/**
+   404→   404→ * Recommended actions based on analysis
+   405→   405→ * @enum RecommendedAction
+   406→   406→ */
+   407→   407→export type RecommendedAction = 
+   408→   408→  | 'approve'
+   409→   409→  | 'approve_with_monitoring'
+   410→   410→  | 'require_additional_verification'
+   411→   411→  | 'require_step_up_auth'
+   412→   412→  | 'decline'
+   413→   413→  | 'block_and_investigate';
+   414→   414→
+   415→   415→/**
+   416→   416→ * Metadata about the analysis
+   417→   417→ * @interface AnalysisMetadata
+   418→   418→ */
+   419→   419→export interface AnalysisMetadata {
+   420→   420→  /** Processing time in milliseconds */
+   421→   421→  processingTimeMs: number;
+   422→   422→  /** Number of detection methods run */
+   423→   423→  methodsRun: number;
+   424→   424→  /** Methods that flagged anomalies */
+   425→   425→  flaggingMethods: AnomalyCategory[];
+   426→   426→  /** Version of detector */
+   427→   427→  detectorVersion: string;
+   428→   428→  /** Configuration used */
+   429→   429→  configSnapshot: Partial<AnomalyDetectorConfig>;
+   430→   430→}
+   431→   431→
+   432→   432→/**
+   433→   433→ * Streaming detection event
+   434→   434→ * @interface StreamingEvent
+   435→   435→ */
+   436→   436→export interface StreamingEvent {
+   437→   437→  /** Event type */
+   438→   438→  type: 'data' | 'anomaly' | 'warning' | 'error' | 'stats';
+   439→   439→  /** Event payload */
+   440→   440→  payload: TransactionData | AnomalyAnalysisResult | Error | StreamingStats;
+   441→   441→  /** Event timestamp */
+   442→   442→  timestamp: Date;
+   443→   443→}
+   444→   444→
+   445→   445→/**
+   446→   446→ * Statistics about the streaming detector
+   447→   447→ * @interface StreamingStats
+   448→   448→ */
+   449→   449→export interface StreamingStats {
+   450→   450→  /** Total events processed */
+   451→   451→  totalEventsProcessed: number;
+   452→   452→  /** Total anomalies detected */
+   453→   453→  totalAnomaliesDetected: number;
+   454→   454→  /** Current anomaly rate */
+   455→   455→  currentAnomalyRate: number;
+   456→   456→  /** Events in current window */
+   457→   457→  eventsInWindow: number;
+   458→   458→  /** Average processing time */
+   459→   459→  avgProcessingTimeMs: number;
+   460→   460→  /** Uptime in seconds */
+   461→   461→  uptimeSeconds: number;
+   462→   462→}
+   463→   463→
+   464→   464→/**
+   465→   465→ * Sliding window buffer for real-time analysis
+   466→   466→ * @interface SlidingWindowBuffer
+   467→   467→ */
+   468→   468→export interface SlidingWindowBuffer<T> {
+   469→   469→  /** Buffer storage */
+   470→   470→  buffer: T[];
+   471→   471→  /** Maximum buffer size */
+   472→   472→  maxSize: number;
+   473→   473→  /** Window duration in milliseconds */
+   474→   474→  windowMs: number;
+   475→   475→  /** Add item to buffer */
+   476→   476→  add(item: T): void;
+   477→   477→  /** Get all items in window */
+   478→   478→  getAll(): T[];
+   479→   479→  /** Get current size */
+   480→   480→  size(): number;
+   481→   481→  /** Clear the buffer */
+   482→   482→  clear(): void;
+   483→   483→  /** Get items within time window */
+   484→   484→  getInWindow(now: Date): T[];
+   485→   485→}
+   486→   486→
+   487→   487→// ============== Constants ==============
+   488→   488→
+   489→   489→/** Default threshold configuration */
+   490→   490→const DEFAULT_THRESHOLDS: ThresholdConfig = {
+   491→   491→  zScoreThreshold: 3.0,
+   492→   492→  iqrMultiplier: 1.5,
+   493→   493→  modifiedZScoreThreshold: 3.5,
+   494→   494→  maxVelocityPerMinute: 5,
+   495→   495→  maxVelocityPerHour: 20,
+   496→   496→  maxGeoDistanceKm: 500,
+   497→   497→  minTimeForDistanceMinutes: 30,
+   498→   498→  amountDeviationPercent: 200,
+   499→   499→  timeDeviationStd: 2.5,
+   500→   500→  newDeviceRiskThreshold: 60,
+   501→   501→  newLocationRiskThreshold: 50,
+   502→   502→};
+   503→   503→
+   504→   504→/** Sensitivity-specific threshold adjustments */
+   505→   505→const SENSITIVITY_ADJUSTMENTS: Record<SensitivityLevel, Partial<ThresholdConfig>> = {
+   506→   506→  [SensitivityLevel.LOW]: {
+   507→   507→    zScoreThreshold: 4.0,
+   508→   508→    iqrMultiplier: 2.0,
+   509→   509→    modifiedZScoreThreshold: 4.5,
+   510→   510→    amountDeviationPercent: 300,
+   511→   511→  },
+   512→   512→  [SensitivityLevel.MEDIUM]: {
+   513→   513→    zScoreThreshold: 3.0,
+   514→   514→    iqrMultiplier: 1.5,
+   515→   515→    modifiedZScoreThreshold: 3.5,
+   516→   516→    amountDeviationPercent: 200,
+   517→   517→  },
+   518→   518→  [SensitivityLevel.HIGH]: {
+   519→   519→    zScoreThreshold: 2.5,
+   520→   520→    iqrMultiplier: 1.25,
+   521→   521→    modifiedZScoreThreshold: 3.0,
+   522→   522→    amountDeviationPercent: 150,
+   523→   523→  },
+   524→   524→  [SensitivityLevel.VERY_HIGH]: {
+   525→   525→    zScoreThreshold: 2.0,
+   526→   526→    iqrMultiplier: 1.0,
+   527→   527→    modifiedZScoreThreshold: 2.5,
+   528→   528→    amountDeviationPercent: 100,
+   529→   529→  },
+   530→   530→};
+   531→   531→
+   532→   532→/** Detector version for metadata */
+   533→   533→const DETECTOR_VERSION = '2.0.0';
+   534→   534→
+   535→   535→/** Earth radius in kilometers for distance calculations */
+   536→   536→const EARTH_RADIUS_KM = 6371;
+   537→   537→
+   538→   538→// ============== Utility Functions ==============
+   539→   539→
+   540→   540→/**
+   541→   541→ * Calculate the mean of an array of numbers
+   542→   542→ * @param values - Array of numeric values
+   543→   543→ * @returns The arithmetic mean
+   544→   544→ * @throws {AppError} If array is empty
+   545→   545→ */
+   546→   546→function calculateMean(values: number[]): number {
+   547→   547→  if (values.length === 0) {
+   548→   548→    throw new AppError('Cannot calculate mean of empty array', ErrorCode.VALIDATION_ERROR);
+   549→   549→  }
+   550→   550→  return values.reduce((sum, val) => sum + val, 0) / values.length;
+   551→   551→}
+   552→   552→
+   553→   553→/**
+   554→   554→ * Calculate the standard deviation of an array of numbers
+   555→   555→ * @param values - Array of numeric values
+   556→   556→ * @param usePopulation - Whether to use population (N) vs sample (N-1) standard deviation
+   557→   557→ * @returns The standard deviation
+   558→   558→ * @throws {AppError} If array has fewer than 2 elements
+   559→   559→ */
+   560→   560→function calculateStandardDeviation(values: number[], usePopulation: boolean = false): number {
+   561→   561→  if (values.length < 2) {
+   562→   562→    throw new AppError('Cannot calculate standard deviation with fewer than 2 values', ErrorCode.VALIDATION_ERROR);
+   563→   563→  }
+   564→   564→  const mean = calculateMean(values);
+   565→   565→  const squaredDifferences = values.map(val => Math.pow(val - mean, 2));
+   566→   566→  const variance = squaredDifferences.reduce((sum, val) => sum + val, 0) / (usePopulation ? values.length : values.length - 1);
+   567→   567→  return Math.sqrt(variance);
+   568→   568→}
+   569→   569→
+   570→   570→/**
+   571→   571→ * Calculate the median of an array of numbers
+   572→   572→ * @param values - Array of numeric values
+   573→   573→ * @returns The median value
+   574→   574→ * @throws {AppError} If array is empty
+   575→   575→ */
+   576→   576→function calculateMedian(values: number[]): number {
+   577→   577→  if (values.length === 0) {
+   578→   578→    throw new AppError('Cannot calculate median of empty array', ErrorCode.VALIDATION_ERROR);
+   579→   579→  }
+   580→   580→  const sorted = [...values].sort((a, b) => a - b);
+   581→   581→  const mid = Math.floor(sorted.length / 2);
+   582→   582→  return sorted.length % 2 !== 0 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+   583→   583→}
+   584→   584→
+   585→   585→/**
+   586→   586→ * Calculate the Median Absolute Deviation (MAD)
+   587→   587→ * @param values - Array of numeric values
+   588→   588→ * @returns The MAD value
+   589→   589→ * @throws {AppError} If array is empty
+   590→   590→ */
+   591→   591→function calculateMAD(values: number[]): number {
+   592→   592→  const median = calculateMedian(values);
+   593→   593→  const deviations = values.map(val => Math.abs(val - median));
+   594→   594→  return calculateMedian(deviations);
+   595→   595→}
+   596→   596→
+   597→   597→/**
+   598→   598→ * Calculate quartiles Q1 and Q3
+   599→   599→ * @param values - Array of numeric values
+   600→   600→ * @returns Object containing Q1 and Q3
+   601→   601→ * @throws {AppError} If array has fewer than 4 elements
+   602→   602→ */
+   603→   603→function calculateQuartiles(values: number[]): { q1: number; q3: number } {
+   604→   604→  if (values.length < 4) {
+   605→   605→    throw new AppError('Cannot calculate quartiles with fewer than 4 values', ErrorCode.VALIDATION_ERROR);
+   606→   606→  }
+   607→   607→  const sorted = [...values].sort((a, b) => a - b);
+   608→   608→  const q1Index = Math.floor(sorted.length * 0.25);
+   609→   609→  const q3Index = Math.floor(sorted.length * 0.75);
+   610→   610→  return {
+   611→   611→    q1: sorted[q1Index],
+   612→   612→    q3: sorted[q3Index],
+   613→   613→  };
+   614→   614→}
+   615→   615→
+   616→   616→/**
+   617→   617→ * Calculate the Haversine distance between two geographic points
+   618→   618→ * @param lat1 - Latitude of first point
+   619→   619→ * @param lon1 - Longitude of first point
+   620→   620→ * @param lat2 - Latitude of second point
+   621→   621→ * @param lon2 - Longitude of second point
+   622→   622→ * @returns Distance in kilometers
+   623→   623→ */
+   624→   624→function calculateHaversineDistance(
+   625→   625→  lat1: number,
+   626→   626→  lon1: number,
+   627→   627→  lat2: number,
+   628→   628→  lon2: number
+   629→   629→): number {
+   630→   630→  const dLat = toRadians(lat2 - lat1);
+   631→   631→  const dLon = toRadians(lon2 - lon1);
+   632→   632→  
+   633→   633→  const a =
+   634→   634→    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+   635→   635→    Math.cos(toRadians(lat1)) * Math.cos(toRadians(lat2)) *
+   636→   636→    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+   637→   637→    
+   638→   638→  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+   639→   639→  
+   640→   640→  return EARTH_RADIUS_KM * c;
+   641→   641→}
+   642→   642→
+   643→   643→/**
+   644→   644→ * Convert degrees to radians
+   645→   645→ * @param degrees - Angle in degrees
+   646→   646→ * @returns Angle in radians
+   647→   647→ */
+   648→   648→function toRadians(degrees: number): number {
+   649→   649→  return degrees * (Math.PI / 180);
+   650→   650→}
+   651→   651→
+   652→   652→/**
+   653→   653→ * Clamp a value between minimum and maximum bounds
+   654→   654→ * @param value - Value to clamp
+   655→   655→ * @param min - Minimum bound
+   656→   656→ * @param max - Maximum bound
+   657→   657→ * @returns Clamped value
+   658→   658→ */
+   659→   659→function clamp(value: number, min: number, max: number): number {
+   660→   660→  return Math.min(Math.max(value, min), max);
+   661→   661→}
+   662→   662→
+   663→   663→/**
+   664→   664→ * Normalize a value to 0-1 range using min-max normalization
+   665→   665→ * @param value - Value to normalize
+   666→   666→ * @param min - Minimum possible value
+   667→   667→ * @param max - Maximum possible value
+   668→   668→ * @returns Normalized value between 0 and 1
+   669→   669→ */
+   670→   670→function normalize(value: number, min: number, max: number): number {
+   671→   671→  if (max === min) return 0.5;
+   672→   672→  return clamp((value - min) / (max - min), 0, 1);
+   673→   673→}
+   674→   674→
+   675→   675→/**
+   676→   676→ * Calculate percentile rank of a value in a dataset
+   677→   677→ * @param value - Value to find percentile for
+   678→   678→ * @param dataset - Dataset to compare against
+   679→   679→ * @returns Percentile rank (0-100)
+   680→   680→ */
+   681→   681→function calculatePercentileRank(value: number, dataset: number[]): number {
+   682→   682→  if (dataset.length === 0) return 50;
+   683→   683→  const sorted = [...dataset].sort((a, b) => a - b);
+   684→   684→  let belowCount = 0;
+   685→   685→  for (const val of sorted) {
+   686→   686→    if (val < value) belowCount++;
+   687→   687→  }
+   688→   688→  return (belowCount / sorted.length) * 100;
+   689→   689→}
+   690→   690→
+   691→   691→// ============== Main Detector Class ==============
+   692→   692→
+   693→   693→/**
+   694→   694→ * Enterprise-grade Anomaly Detector for payment fraud prevention
+   695→   695→ * 
+   696→   696→ * @class AnomalyDetector
+   697→   697→ * @description Provides comprehensive anomaly detection capabilities including
+   698→   698→ * statistical analysis, time series analysis, behavioral profiling, geographic
+   699→   699→ * analysis, device fingerprinting, and real-time streaming detection.
+   700→   700→ * 
+   701→   701→ * @example
+   702→   702→ * ```typescript
+   703→   703→ * const detector = new AnomalyDetector({
+   704→   704→ *   sensitivity: SensitivityLevel.HIGH,
+   705→   705→ *   enableBehavioralAnalysis: true,
+   706→   706→ *   enableGeographicAnalysis: true,
+   707→   707→ *   enableDeviceAnalysis: true,
+   708→   708→ * });
+   709→   709→ * 
+   710→   710→ * // Analyze a single transaction
+   711→   711→ * const result = await detector.analyzeTransaction(transaction);
+   712→   712→ * 
+   713→   713→ * // Start real-time monitoring
+   714→   714→ * detector.startStreaming();
+   715→   715→ * detector.onAnomaly((result) => console.log('Anomaly:', result));
+   716→   716→ * ```
+   717→   717→ */
+   718→   718→export class AnomalyDetector {
+   719→   719→  /** Current configuration */
+   720→   720→  private config: Required<AnomalyDetectorConfig>;
+   721→   721→  
+   722→   722→  /** Active threshold configuration */
+   723→   723→  private thresholds: ThresholdConfig;
+   724→   724→  
+   725→   725→  /** Historical data store for time series analysis */
+   726→   726→  private timeSeriesData: Map<string, TimeSeriesPoint[]>;
+   727→   727→  
+   728→   728→  /** User profiles for behavioral analysis */
+   729→   729→  private userProfiles: Map<string, UserProfile>;
+   730→   730→  
+   731→   731→  /** Device profiles for fingerprint analysis */
+   732→   732→  private deviceProfiles: Map<string, DeviceProfile>;
+   733→   733→  
+   734→   734→  /** Geographic history for users */
+   735→   735→  private geoHistory: Map<string, GeoPoint[]>;
+   736→   736→  
+   737→   737→  /** Real-time streaming state */
+   738→   738→  private isStreaming: boolean;
+   739→   739→  
+   740→   740→  /** Streaming statistics */
+   741→   741→  private streamingStats: StreamingStats;
+   742→   742→  
+   743→   743→  /** Streaming start time */
+   744→   744→  private streamingStartTime: Date | null;
+   745→   745→  
+   746→   746→  /** Sliding window buffer for real-time analysis */
+   747→   747→  private slidingWindow: SlidingWindowBuffer<TransactionData>;
+   748→   748→  
+   749→   749→  /** Event listeners for streaming mode */
+   750→   750→  private eventListeners: Map<string, ((event: StreamingEvent) => void)[]>;
+   751→   751→  
+   752→   752→  /** Processing time tracker for stats */
+   753→   753→  private recentProcessingTimes: number[];
+   754→   754→
+   755→   755→  /**
+   756→   756→   * Create a new AnomalyDetector instance
+   757→   757→   * @constructor
+   758→   758→   * @param config - Configuration options for the detector
+   759→   759→   */
+   760→   760→  constructor(config: AnomalyDetectorConfig = {}) {
+   761→   761→    // Apply default configuration
+   762→   762→    this.config = {
+   763→   763→      sensitivity: config.sensitivity || SensitivityLevel.MEDIUM,
+   764→   764→      enableRealTimeDetection: config.enableRealTimeDetection || false,
+   765→   765→      timeSeriesWindowSize: config.timeSeriesWindowSize || 100,
+   766→   766→      realtimeWindowMs: config.realtimeWindowMs || 300000, // 5 minutes
+   767→   767→      maxHistorySize: config.maxHistorySize || 10000,
+   768→   768→      enableBehavioralAnalysis: config.enableBehavioralAnalysis !== false,
+   769→   769→      enableGeographicAnalysis: config.enableGeographicAnalysis !== false,
+   770→   770→      enableDeviceAnalysis: config.enableDeviceAnalysis !== false,
+   771→   771→      customThresholds: config.customThresholds || {},
+   772→   772→      adaptiveThresholds: config.adaptiveThresholds || false,
+   773→   773→      minSamplesRequired: config.minSamplesRequired || 10,
+   774→   774→    };
+   775→   775→
+   776→   776→    // Initialize thresholds with sensitivity adjustments
+   777→   777→    this.thresholds = this.initializeThresholds();
+   778→   778→
+   779→   779→    // Initialize data stores
+   780→   780→    this.timeSeriesData = new Map();
+   781→   781→    this.userProfiles = new Map();
+   782→   782→    this.deviceProfiles = new Map();
+   783→   783→    this.geoHistory = new Map();
+   784→   784→    
+   785→   785→    // Initialize streaming state
+   786→   786→    this.isStreaming = false;
+   787→   787→    this.streamingStartTime = null;
+   788→   788→    this.eventListeners = new Map();
+   789→   789→    this.recentProcessingTimes = [];
+   790→   790→    
+   791→   791→    // Initialize streaming statistics
+   792→   792→    this.streamingStats = {
+   793→   793→      totalEventsProcessed: 0,
+   794→   794→      totalAnomaliesDetected: 0,
+   795→   795→      currentAnomalyRate: 0,
+   796→   796→      eventsInWindow: 0,
+   797→   797→      avgProcessingTimeMs: 0,
+   798→   798→      uptimeSeconds: 0,
+   799→   799→    };
+   800→   800→
+   801→   801→    // Initialize sliding window buffer
+   802→   802→    this.slidingWindow = this.createSlidingWindow<TransactionData>(
+   803→   803→      this.config.maxHistorySize,
+   804→   804→      this.config.realtimeWindowMs
+   805→   805→    );
+   806→   806→
+   807→   807→    logger.info('AnomalyDetector initialized', {
+   808→   808→      event: 'anomaly_detector.init',
+   809→   809→      metadata: {
+   810→   810→        sensitivity: this.config.sensitivity,
+   811→   811→        version: DETECTOR_VERSION,
+   812→   812→        features: {
+   813→   813→          behavioral: this.config.enableBehavioralAnalysis,
+   814→   814→          geographic: this.config.enableGeographicAnalysis,
+   815→   815→          device: this.config.enableDeviceAnalysis,
+   816→   816→          realtime: this.config.enableRealTimeDetection,
+   817→   817→          adaptive: this.config.adaptiveThresholds,
+   818→   818→        },
+   819→   819→      },
+   820→   820→    });
+   821→   821→  }
+   822→   822→
+   823→   823→  /**
+   824→   824→   * Initialize thresholds based on configuration and sensitivity
+   825→   825→   * @private
+   826→   826→   * @returns Initialized threshold configuration
+   827→   827→   */
+   828→   828→  private initializeThresholds(): ThresholdConfig {
+   829→   829→    const baseThresholds = { ...DEFAULT_THRESHOLDS };
+   830→   830→    const sensitivityAdjustments = SENSITIVITY_ADJUSTMENTS[this.config.sensitivity] || {};
+   831→   831→    const customThresholds = this.config.customThresholds || {};
+   832→   832→    
+   833→   833→    return {
+   834→   834→      ...baseThresholds,
+   835→   835→      ...sensitivityAdjustments,
+   836→   836→      ...customThresholds,
+   837→   837→    } as ThresholdConfig;
+   838→   838→  }
+   839→   839→
+   840→   840→  /**
+   841→   841→   * Create a sliding window buffer for real-time analysis
+   842→   842→   * @private
+   843→   843→   * @template T - Type of items in the buffer
+   844→   844→   * @param maxSize - Maximum number of items
+   845→   845→   * @param windowMs - Window duration in milliseconds
+   846→   846→   * @returns Sliding window buffer instance
+   847→   847→   */
+   848→   848→  private createSlidingWindow<T>(maxSize: number, windowMs: number): SlidingWindowBuffer<T> {
+   849→   849→    return {
+   850→   850→      buffer: [],
+   851→   851→      maxSize,
+   852→   852→      windowMs,
+   853→   853→      add(item: T): void {
+   854→   854→        this.buffer.push(item);
+   855→   855→        if (this.buffer.length > this.maxSize) {
+   856→   856→          this.buffer.shift();
+   857→   857→        }
+   858→   858→      },
+   859→   859→      getAll(): T[] {
+   860→   860→        return [...this.buffer];
+   861→   861→      },
+   862→   862→      size(): number {
+   863→   863→        return this.buffer.length;
+   864→   864→      },
+   865→   865→      clear(): void {
+   866→   866→        this.buffer = [];
+   867→   867→      },
+   868→   868→      getInWindow(now: Date): T[] {
+   869→   869→        const windowStart = new Date(now.getTime() - this.windowMs);
+   870→   870→        // Type assertion for timestamp access
+   871→   871→        return this.buffer.filter((item) => {
+   872→   872→          const typedItem = item as unknown as { timestamp: Date };
+   873→   873→          return typedItem.timestamp >= windowStart;
+   874→   874→        });
+   875→   875→      },
+   876→   876→    };
+   877→   877→  }
+   878→   878→
+   879→   879→  // ============== Public API Methods ==============
+   880→   880→
+   881→   881→  /**
+   882→   882→   * Analyze a single transaction for anomalies
+   883→   883→   * 
+   884→   884→   * @async
+   885→   885→   * @param transaction - Transaction data to analyze
+   886→   886→   * @returns Comprehensive anomaly analysis result
+   887→   887→   * @throws {AppError} If transaction data is invalid or analysis fails
+   888→   888→   * 
+   889→   889→   * @example
+   890→   890→   * ```typescript
+   891→   891→   * const result = await detector.analyzeTransaction({
+   892→   892→   *   transactionId: 'txn_123',
+   893→   893→   *   amount: 50000,
+   894→   894→   *   currency: 'NGN',
+   895→   895→   *   timestamp: new Date(),
+   896→   896→   *   customerId: 'customer_hash',
+   897→   897→   *   // ... other fields
+   898→   898→   * });
+   899→   899→   * 
+   900→   900→   * if (result.isAnomalous) {
+   901→   901→   *   console.log(`Risk Score: ${result.riskScore}`);
+   902→   902→   *   console.log(`Recommended Action: ${result.recommendedAction}`);
+   903→   903→   * }
+   904→   904→   * ```
+   905→   905→   */
+   906→   906→  async analyzeTransaction(transaction: TransactionData): Promise<AnomalyAnalysisResult> {
+   907→   907→    const startTime = performance.now();
+   908→   908→    
+   909→   909→    try {
+   910→   910→      // Validate input
+   911→   911→      this.validateTransaction(transaction);
+   912→   912→      
+   913→   913→      logger.debug('Starting transaction analysis', {
+   914→   914→        event: 'analyzer.analysis.start',
+   915→   915→        metadata: {
+   916→   916→          transactionId: transaction.transactionId,
+   917→   917→          customerId: transaction.customerId,
+   918→   918→          amount: transaction.amount,
+   919→   919→        },
+   920→   920→      });
+   921→   921→
+   922→   922→      const detections: DetectionResult[] = [];
+   923→   923→      let methodsRunCount = 0;
+   924→   924→      
+   925→   925→      // Add to sliding window for velocity analysis
+   926→   926→      this.slidingWindow.add(transaction);
+   927→   927→      
+   928→   928→      // Run all enabled detection methods
+   929→   929→      detections.push(...this.runStatisticalAnalysis(transaction));
+   930→   930→      methodsRunCount++;
+   931→   931→      detections.push(...this.runTemporalAnalysis(transaction));
+   932→   932→      methodsRunCount++;
+   933→   933→      
+   934→   934→      if (this.config.enableBehavioralAnalysis) {
+   935→   935→        detections.push(...this.runBehavioralAnalysis(transaction));
+   936→   936→        methodsRunCount++;
+   937→   937→      }
+   938→   938→      
+   939→   939→      if (this.config.enableGeographicAnalysis) {
+   940→   940→        detections.push(...this.runGeographicAnalysis(transaction));
+   941→   941→        methodsRunCount++;
+   942→   942→      }
+   943→   943→      
+   944→   944→      if (this.config.enableDeviceAnalysis) {
+   945→   945→        detections.push(...this.runDeviceAnalysis(transaction));
+   946→   946→        methodsRunCount++;
+   947→   947→      }
+   948→   948→      
+   949→   949→      detections.push(...this.runVelocityAnalysis(transaction));
+   950→   950→      methodsRunCount++;
+   951→   951→
+   952→   952→      // Compile final result (pass methodsRunCount)
+   953→   953→      const result = this.compileAnalysisResult(detections, startTime, methodsRunCount);
+   954→   954→
+   955→   955→      // Update internal state with this transaction
+   956→   956→      this.updateInternalState(transaction);
+   957→   957→
+   958→   958→      // Emit event if streaming and anomalous
+   959→   959→      if (this.isStreaming && result.isAnomalous) {
+   960→   960→        this.emitEvent({ type: 'anomaly', payload: result, timestamp: new Date() });
+   961→   961→        this.streamingStats.totalAnomaliesDetected++;
+   962→   962→      }
+   963→   963→
+   964→   964→      logger.debug('Transaction analysis complete', {
+   965→   965→        event: 'analyzer.analysis.complete',
+   966→   966→        metadata: {
+   967→   967→          transactionId: transaction.transactionId,
+   968→   968→          isAnomalous: result.isAnomalous,
+   969→   969→          riskScore: result.riskScore,
+   970→   970→          processingTimeMs: result.metadata.processingTimeMs,
+   971→   971→        },
+   972→   972→      });
+   973→   973→
+   974→   974→      return result;
+   975→   975→    } catch (error) {
+   976→   976→      const appError = error instanceof AppError 
+   977→   977→        ? error 
+   978→   978→        : new AppError('Transaction analysis failed', ErrorCode.UNKNOWN_ERROR, { cause: error as Error });
+   979→   979→      
+   980→   980→      logger.error('Transaction analysis error', {
+   981→   981→        event: 'analyzer.analysis.error',
+   982→   982→        error: appError,
+   983→   983→        metadata: { transactionId: transaction.transactionId },
+   984→   984→      });
+   985→   985→
+   986→   986→      throw appError;
+   987→   987→    }
+   988→   988→  }
+   989→   989→
+   990→   990→  /**
+   991→   991→   * Analyze a batch of transactions for anomalies
+   992→   992→   * 
+   993→   993→   * @async
+   994→   994→   * @param transactions - Array of transaction data to analyze
+   995→   995→   * @returns Array of analysis results
+   996→   996→   * @throws {AppError} If batch analysis fails
+   997→   997→   */
+   998→   998→  async analyzeBatch(transactions: TransactionData[]): Promise<AnomalyAnalysisResult[]> {
+   999→   999→    if (!Array.isArray(transactions) || transactions.length === 0) {
+  1000→  1000→      throw new AppError('Transactions array cannot be empty', ErrorCode.VALIDATION_ERROR);
+  1001→  1001→    }
+  1002→  1002→
+  1003→  1003→    logger.info('Starting batch analysis', {
+  1004→  1004→      event: 'analyzer.batch.start',
+  1005→  1005→      metadata: { count: transactions.length },
+  1006→  1006→    });
+  1007→  1007→
+  1008→  1008→    const results: AnomalyAnalysisResult[] = [];
+  1009→  1009→    
+  1010→  1010→    for (const transaction of transactions) {
+  1011→  1011→      try {
+  1012→  1012→        const result = await this.analyzeTransaction(transaction);
+  1013→  1013→        results.push(result);
+  1014→  1014→      } catch (error) {
+  1015→  1015→        logger.warn('Failed to analyze transaction in batch', {
+  1016→  1016→          event: 'analyzer.batch.item_error',
+  1017→  1017→          metadata: { transactionId: transaction.transactionId },
+  1018→  1018→          error: error as Error,
+  1019→  1019→        });
+  1020→  1020→        // Continue with other transactions
+  1021→  1021→      }
+  1022→  1022→    }
+  1023→  1023→
+  1024→  1024→    const anomalyCount = results.filter(r => r.isAnomalous).length;
+  1025→  1025→    logger.info('Batch analysis complete', {
+  1026→  1026→      event: 'analyzer.batch.complete',
+  1027→  1027→      metadata: {
+  1028→  1028→        total: results.length,
+  1029→  1029→        anomalous: anomalyCount,
+  1030→  1030→        clean: results.length - anomalyCount,
+  1031→  1031→      },
+  1032→  1032→    });
+  1033→  1033→
+  1034→  1034→    return results;
+  1035→  1035→  }
+  1036→  1036→
+  1037→  1037→  /**
+  1038→  1038→   * Detect anomalies in a numerical dataset using statistical methods
+  1039→  1039→   * 
+  1040→  1040→   * @param values - Array of numerical values to analyze
+  1041→  1041→   * @param method - Statistical method to use
+  1042→  1042→   * @returns Array of indices and scores for anomalous values
+  1043→  1043→   * @throws {AppError} If analysis fails or insufficient data
+  1044→  1044→   */
+  1045→  1045→  detectStatisticalOutliers(
+  1046→  1046→    values: number[],
+  1047→  1047→    method: StatisticalMethod = StatisticalMethod.HYBRID
+  1048→  1048→  ): Array<{ index: number; value: number; score: number; isOutlier: boolean }> {
+  1049→  1049→    if (!Array.isArray(values) || values.length < this.config.minSamplesRequired) {
+  1050→  1050→      throw new AppError(
+  1051→  1051→        `Insufficient data: ${values?.length || 0} values provided, minimum ${this.config.minSamplesRequired} required`,
+  1052→  1052→        ErrorCode.VALIDATION_ERROR
+  1053→  1053→      );
+  1054→  1054→    }
+  1055→  1055→
+  1056→  1056→    const results: Array<{ index: number; value: number; score: number; isOutlier: boolean }> = 
+  1057→  1057→      values.map((value, index) => ({ index, value, score: 0, isOutlier: false }));
+  1058→  1058→
+  1059→  1059→    switch (method) {
+  1060→  1060→      case StatisticalMethod.Z_SCORE:
+  1061→  1061→        this.applyZScoreDetection(values, results);
+  1062→  1062→        break;
+  1063→  1063→      case StatisticalMethod.IQR:
+  1064→  1064→        this.applyIQRDetection(values, results);
+  1065→  1065→        break;
+  1066→  1066→      case StatisticalMethod.MODIFIED_Z_SCORE:
+  1067→  1067→        this.applyModifiedZScoreDetection(values, results);
+  1068→  1068→        break;
+  1069→  1069→      case StatisticalMethod.HYBRID:
+  1070→  1070→        // Apply all methods and combine results
+  1071→  1071→        this.applyZScoreDetection(values, results);
+  1072→  1072→        this.applyIQRDetection(values, results);
+  1073→  1073→        this.applyModifiedZScoreDetection(values, results);
+  1074→  1074→        // Mark as outlier if any method flags it
+  1075→  1075→        results.forEach(r => {
+  1076→  1076→          r.isOutlier = r.score > 1;
+  1077→  1077→        });
+  1078→  1078→        break;
+  1079→  1079→    }
+  1080→  1080→
+  1081→  1081→    return results;
+  1082→  1082→  }
+  1083→  1083→
+  1084→  1084→  /**
+  1085→  1085→   * Detect anomalies in time series data
+  1086→  1086→   * 
+  1087→  1087→   * @param data - Time series data points
+  1088→  1088→   * @param options - Analysis options
+  1089→  1089→   * @returns Array of anomalous points
+  1090→  1090→   */
+  1091→  1091→  detectTimeSeriesAnomalies(
+  1092→  1092→    data: TimeSeriesPoint[],
+  1093→  1093→    options: {
+  1094→  1094→      seasonalityPeriod?: number;
+  1095→  1095→      trendSensitivity?: number;
+  1096→  1096→    } = {}
+  1097→  1097→  ): TimeSeriesPoint[] {
+  1098→  1098→    if (!Array.isArray(data) || data.length < this.config.minSamplesRequired) {
+  1099→  1099→      logger.warn('Insufficient time series data for analysis');
+  1100→  1100→      return [];
+  1101→  1101→    }
+  1102→  1102→
+  1103→  1103→    const seasonalityPeriod = options.seasonalityPeriod || 24; // Default: hourly seasonality
+  1104→  1104→    const trendSensitivity = options.trendSensitivity || 2.0;
+  1105→  1105→
+  1106→  1106→    const values = data.map(d => d.value);
+  1107→  1107→    const outliers = this.detectStatisticalOutliers(values, StatisticalMethod.HYBRID);
+  1108→  1108→    
+  1109→  1109→    const anomalousIndices = new Set(
+  1110→  1110→      outliers.filter(o => o.isOutlier).map(o => o.index)
+  1111→  1111→    );
+  1112→  1112→
+  1113→  1113→    // Additional time-series specific checks
+  1114→  1114→    const anomalousPoints: TimeSeriesPoint[] = [];
+  1115→  1115→    
+  1116→  1116→    for (let i = 0; i < data.length; i++) {
+  1117→  1117→      if (anomalousIndices.has(i)) {
+  1118→  1118→        anomalousPoints.push(data[i]);
+  1119→  1119→        continue;
+  1120→  1120→      }
+  1121→  1121→
+  1122→  1122→      // Check for sudden changes (point-to-point difference)
+  1123→  1123→      if (i > 0) {
+  1124→  1124→        const prevValue = data[i - 1].value;
+  1125→  1125→        const currValue = data[i].value;
+  1126→  1126→        const changePercent = prevValue !== 0 
+  1127→  1127→          ? Math.abs((currValue - prevValue) / prevValue) * 100 
+  1128→  1128→          : 0;
+  1129→  1129→        
+  1130→  1130→        if (changePercent > 100 * trendSensitivity) {
+  1131→  1131→          anomalousPoints.push(data[i]);
+  1132→  1132→        }
+  1133→  1133→      }
+  1134→  1134→    }
+  1135→  1135→
+  1136→  1136→    return anomalousPoints;
+  1137→  1137→  }
+  1138→  1138→
+  1139→  1139→  /**
+  1140→  1140→   * Start real-time streaming anomaly detection
+  1141→  1141→   * 
+  1142→  1142→   * @description Begins listening for incoming transactions and analyzing them
+  1143→  1143→   * in real-time using a sliding window approach.
+  1144→  1144→   */
+  1145→  1145→  startStreaming(): void {
+  1146→  1146→    if (this.isStreaming) {
+  1147→  1147→      logger.warn('Streaming already active');
+  1148→  1148→      return;
+  1149→  1149→    }
+  1150→  1150→
+  1151→  1151→    this.isStreaming = true;
+  1152→  1152→    this.streamingStartTime = new Date();
+  1153→  1153→    
+  1154→  1154→    logger.info('Real-time streaming started', {
+  1155→  1155→      event: 'analyzer.streaming.started',
+  1156→  1156→      metadata: {
+  1157→  1157→        windowMs: this.config.realtimeWindowMs,
+  1158→  1158→        maxSize: this.config.maxHistorySize,
+  1159→  1159→      },
+  1160→  1160→    });
+  1161→  1161→  }
+  1162→  1162→
+  1163→  1163→  /**
+  1164→  1164→   * Stop real-time streaming anomaly detection
+  1165→  1165→   */
+  1166→  1166→  stopStreaming(): void {
+  1167→  1167→    if (!this.isStreaming) {
+  1168→  1168→      logger.warn('Streaming not active');
+  1169→  1169→      return;
+  1170→  1170→    }
+  1171→  1171→
+  1172→  1172→    this.isStreaming = false;
+  1173→  1173→    
+  1174→  1174→    logger.info('Real-time streaming stopped', {
+  1175→  1175→      event: 'analyzer.streaming.stopped',
+  1176→  1176→      metadata: {
+  1177→  1177→        totalEventsProcessed: this.streamingStats.totalEventsProcessed,
+  1178→  1178→        totalAnomaliesDetected: this.streamingStats.totalAnomaliesDetected,
+  1179→  1179→        uptimeSeconds: this.streamingStats.uptimeSeconds,
+  1180→  1180→      },
+  1181→  1181→    });
+  1182→  1182→  }
+  1183→  1183→
+  1184→  1184→  /**
+  1185→  1185→   * Process a transaction in streaming mode
+  1186→  1186→   * 
+  1187→  1187→   * @async
+  1188→  1188→   * @param transaction - Transaction to process
+  1189→  1189→   * @returns Analysis result (same as analyzeTransaction but optimized for streaming)
+  1190→  1190→   */
+  1191→  1191→  async processStreamEvent(transaction: TransactionData): Promise<AnalysisResult> {
+  1192→  1192→    const startTime = performance.now();
+  1193→  1193→    
+  1194→  1194→    try {
+  1195→  1195→      // Add to sliding window
+  1196→  1196→      this.slidingWindow.add(transaction);
+  1197→  1197→      
+  1198→  1198→      // Update streaming stats
+  1199→  1199→      this.streamingStats.totalEventsProcessed++;
+  1200→  1200→      this.streamingStats.eventsInWindow = this.slidingWindow.size();
+  1201→  1201→      
+  1202→  1202→      // Get recent transactions for context
+  1203→  1203→      const recentTransactions = this.slidingWindow.getAll();
+  1204→  1204→      
+  1205→  1205→      // Run quick analysis optimized for streaming
+  1206→  1206→      const result = await this.analyzeTransaction(transaction);
+  1207→  1207→      
+  1208→  1208→      // Track processing time
+  1209→  1209→      const processingTime = performance.now() - startTime;
+  1210→  1210→      this.recentProcessingTimes.push(processingTime);
+  1211→  1211→      if (this.recentProcessingTimes.length > 100) {
+  1212→  1212→        this.recentProcessingTimes.shift();
+  1213→  1213→      }
+  1214→  1214→      this.streamingStats.avgProcessingTimeMs = 
+  1215→  1215→        this.recentProcessingTimes.reduce((a, b) => a + b, 0) / this.recentProcessingTimes.length;
+  1216→  1216→      
+  1217→  1217→      // Update anomaly rate
+  1218→  1218→      this.streamingStats.currentAnomalyRate = 
+  1219→  1219→        this.streamingStats.totalEventsProcessed > 0
+  1220→  1220→          ? this.streamingStats.totalAnomaliesDetected / this.streamingStats.totalEventsProcessed
+  1221→  1221→          : 0;
+  1222→  1222→      
+  1223→  1223→      // Update uptime
+  1224→  1224→      if (this.streamingStartTime) {
+  1225→  1225→        this.streamingStats.uptimeSeconds = 
+  1226→  1226→          (Date.now() - this.streamingStartTime.getTime()) / 1000;
+  1227→  1227→      }
+  1228→  1228→      
+  1229→  1229→      // Emit data event
+  1230→  1230→      this.emitEvent({ type: 'data', payload: transaction, timestamp: new Date() });
+  1231→  1231→      
+  1232→  1232→      return result;
+  1233→  1233→    } catch (error) {
+  1234→  1234→      this.emitEvent({ 
+  1235→  1235→        type: 'error', 
+  1236→  1236→        payload: error instanceof Error ? error : new Error(String(error)), 
+  1237→  1237→        timestamp: new Date() 
+  1238→  1238→      });
+  1239→  1239→      throw error;
+  1240→  1240→    }
+  1241→  1241→  }
+  1242→  1242→
+  1243→  1243→  /**
+  1244→  1244→   * Register an event listener for streaming events
+  1245→  1245→   * 
+  1246→  1246→   * @param eventType - Type of event to listen for
+  1247→  1247→   * @param callback - Callback function to invoke when event occurs
+  1248→  1248→   */
+  1249→  1249→  on(eventType: 'anomaly' | 'data' | 'error' | 'warning' | 'stats', callback: (event: StreamingEvent) => void): void {
+  1250→  1250→    if (!this.eventListeners.has(eventType)) {
+  1251→  1251→      this.eventListeners.set(eventType, []);
+  1252→  1252→    }
+  1253→  1253→    this.eventListeners.get(eventType)!.push(callback);
+  1254→  1254→  }
+  1255→  1255→
+  1256→  1256→  /**
+  1257→  1257→   * Remove an event listener
+  1258→  1258→   * 
+  1259→  1259→   * @param eventType - Type of event
+  1260→  1260→   * @param callback - Callback function to remove
+  1261→  1261→   */
+  1262→  1262→  off(eventType: string, callback: (event: StreamingEvent) => void): void {
+  1263→  1263→    const listeners = this.eventListeners.get(eventType);
+  1264→  1264→    if (listeners) {
+  1265→  1265→      const index = listeners.indexOf(callback);
+  1266→  1266→      if (index > -1) {
+  1267→  1267→        listeners.splice(index, 1);
+  1268→  1268→      }
+  1269→  1269→    }
+  1270→  1270→  }
+  1271→  1271→
+  1272→  1272→  /**
+  1273→  1273→   * Get current streaming statistics
+  1274→  1274→   * 
+  1275→  1275→   * @returns Current streaming statistics
+  1276→  1276→   */
+  1277→  1277→  getStreamingStats(): StreamingStats {
+  1278→  1278→    return { ...this.streamingStats };
+  1279→  1279→  }
+  1280→  1280→
+  1281→  1281→  /**
+  1282→  1282→   * Update user profile with transaction data
+  1283→  1283→   * 
+  1284→  1284→   * @param transaction - Transaction to incorporate into profile
+  1285→  1285→   */
+  1286→  1286→  updateUserProfile(transaction: TransactionData): void {
+  1287→  1287→    const existingProfile = this.userProfiles.get(transaction.customerId);
+  1288→  1288→    
+  1289→  1289→    if (existingProfile) {
+  1290→  1290→      // Update existing profile
+  1291→  1291→      const n = existingProfile.totalTransactions;
+  1292→  1292→      const newAvgAmount = (existingProfile.avgAmount * n + transaction.amount) / (n + 1);
+  1293→  1293→      
+  1294→  1294→      // Update standard deviation using online algorithm (Welford's method)
+  1295→  1295→      // For simplicity, we'll use a approximation based on the difference from mean
+  1296→  1296→      const diffFromMean = Math.abs(transaction.amount - existingProfile.avgAmount);
+  1297→  1297→      const newStdAmount = Math.sqrt(
+  1298→  1298→        (existingProfile.stdAmount * existingProfile.stdAmount * (n - 1) + diffFromMean * diffFromMean) / n
+  1299→  1299→      );
+  1300→  1300→      
+  1301→  1301→      // Update typical hours
+  1302→  1302→      const hour = transaction.timestamp.getHours();
+  1303→  1303→      if (!existingProfile.typicalHours.includes(hour)) {
+  1304→  1304→        existingProfile.typicalHours.push(hour);
+  1305→  1305→      }
+  1306→  1306→      
+  1307→  1307→      // Update typical days
+  1308→  1308→      const day = transaction.timestamp.getDay();
+  1309→  1309→      if (!existingProfile.typicalDays.includes(day)) {
+  1310→  1310→        existingProfile.typicalDays.push(day);
+  1311→  1311→      }
+  1312→  1312→      
+  1313→  1313→      // Update known devices
+  1314→  1314→      existingProfile.knownDevices.add(transaction.deviceFingerprint);
+  1315→  1315→      
+  1316→  1316→      // Update known locations
+  1317→  1317→      existingProfile.knownLocations.add(transaction.countryCode);
+  1318→  1318→      
+  1319→  1319→      // Update preferred methods
+  1320→  1320→      existingProfile.preferredMethods.add(transaction.paymentMethod);
+  1321→  1321→      
+  1322→  1322→      // Update timing
+  1323→  1323→      const timeDiff = transaction.timestamp.getTime() - existingProfile.lastTransactionDate.getTime();
+  1324→  1324→      existingProfile.avgTimeBetweenTxnMinutes = 
+  1325→  1325→        (existingProfile.avgTimeBetweenTxnMinutes * n + timeDiff / 60000) / (n + 1);
+  1326→  1326→      
+  1327→  1327→      existingProfile.avgAmount = newAvgAmount;
+  1328→  1328→      existingProfile.stdAmount = newStdAmount || 0; // Ensure it's at least 0
+  1329→  1329→      // Set minimum std to avoid division by zero issues if all amounts are same
+  1330→  1330→      if (existingProfile.stdAmount === 0 && n > 1) {
+  1331→  1331→        existingProfile.stdAmount = existingProfile.avgAmount * 0.1; // Assume 10% variation
+  1332→  1332→      }
+  1333→  1333→      existingProfile.totalTransactions = n + 1;
+  1334→  1334→      existingProfile.lastTransactionDate = transaction.timestamp;
+  1335→  1335→      existingProfile.dailyVelocity = existingProfile.totalTransactions / Math.max(existingProfile.accountAgeDays, 1);
+  1336→  1336→    } else {
+  1337→  1337→      // Create new profile
+  1338→  1338→      const newProfile: UserProfile = {
+  1339→  1339→        customerId: transaction.customerId,
+  1340→  1340→        avgAmount: transaction.amount,
+  1341→  1341→        stdAmount: 0,
+  1342→  1342→        medianAmount: transaction.amount,
+  1343→  1343→        typicalHours: [transaction.timestamp.getHours()],
+  1344→  1344→        typicalDays: [transaction.timestamp.getDay()],
+  1345→  1345→        knownDevices: new Set([transaction.deviceFingerprint]),
+  1346→  1346→        knownLocations: new Set([transaction.countryCode]),
+  1347→  1347→        knownIpAddresses: new Set([transaction.ipAddress]),
+  1348→  1348→        preferredMethods: new Set([transaction.paymentMethod]),
+  1349→  1349→        accountAgeDays: 1,
+  1350→  1350→        totalTransactions: 1,
+  1351→  1351→        lastTransactionDate: transaction.timestamp,
+  1352→  1352→        avgTimeBetweenTxnMinutes: 0,
+  1353→  1353→        dailyVelocity: 1,
+  1354→  1354→      };
+  1355→  1355→      
+  1356→  1356→      this.userProfiles.set(transaction.customerId, newProfile);
+  1357→  1357→    }
+  1358→  1358→    
+  1359→  1359→    logger.debug('User profile updated', {
+  1360→  1360→      event: 'analyzer.profile.updated',
+  1361→  1361→      metadata: { customerId: transaction.customerId },
+  1362→  1362→    });
+  1363→  1363→  }
+  1364→  1364→
+  1365→  1365→  /**
+  1366→  1366→   * Get user's current risk profile
+  1367→  1367→   * 
+  1368→  1368→   * @param customerId - Customer identifier
+  1369→  1369→   * @returns User profile or null if not found
+  1370→  1370→   */
+  1371→  1371→  getUserProfile(customerId: string): UserProfile | null {
+  1372→  1372→    return this.userProfiles.get(customerId) || null;
+  1373→  1373→  }
+  1374→  1374→
+  1375→  1375→  /**
+  1376→  1376→   * Update detector configuration
+  1377→  1377→   * 
+  1378→  1378→   * @param configUpdates - Partial configuration updates to apply
+  1379→  1379→   */
+  1380→  1380→  updateConfiguration(configUpdates: Partial<AnomalyDetectorConfig>): void {
+  1381→  1381→    Object.assign(this.config, configUpdates);
+  1382→  1382→    
+  1383→  1383→    // Reinitialize thresholds if sensitivity changed
+  1384→  1384→    if (configUpdates.sensitivity || configUpdates.customThresholds) {
+  1385→  1385→      this.thresholds = this.initializeThresholds();
+  1386→  1386→    }
+  1387→  1387→    
+  1388→  1388→    logger.info('Detector configuration updated', {
+  1389→  1389→      event: 'analyzer.config.updated',
+  1390→  1390→      metadata: { updates: Object.keys(configUpdates) },
+  1391→  1391→    });
+  1392→  1392→  }
+  1393→  1393→
+  1394→  1394→  /**
+  1395→  1395→   * Get current detector configuration (without sensitive data)
+  1396→  1396→   * 
+  1397→  1397→   * @returns Current configuration snapshot
+  1398→  1398→   */
+  1399→  1399→  getConfiguration(): Readonly<Partial<AnomalyDetectorConfig>> {
+  1400→  1400→    return { ...this.config };
+  1401→  1401→  }
+  1402→  1402→
+  1403→  1403→  /**
+  1404→  1404→   * Get current threshold configuration
+  1405→  1405→   * 
+  1406→  1406→   * @returns Current thresholds
+  1407→  1407→   */
+  1408→  1408→  getThresholds(): Readonly<ThresholdConfig> {
+  1409→  1409→    return { ...this.thresholds };
+  1410→  1410→  }
+  1411→  1411→
+  1412→  1412→  /**
+  1413→  1413→   * Reset all internal state (for testing purposes)
+  1414→  1414→   */
+  1415→  1415→  resetState(): void {
+  1416→  1416→    this.timeSeriesData.clear();
+  1417→  1417→    this.userProfiles.clear();
+  1418→  1418→    this.deviceProfiles.clear();
+  1419→  1419→    this.geoHistory.clear();
+  1420→  1420→    this.slidingWindow.clear();
+  1421→  1421→    this.recentProcessingTimes = [];
+  1422→  1422→    this.streamingStats = {
+  1423→  1423→      totalEventsProcessed: 0,
+  1424→  1424→      totalAnomaliesDetected: 0,
+  1425→  1425→      currentAnomalyRate: 0,
+  1426→  1426→      eventsInWindow: 0,
+  1427→  1427→      avgProcessingTimeMs: 0,
+  1428→  1428→      uptimeSeconds: 0,
+  1429→  1429→    };
+  1430→  1430→    
+  1431→  1431→    logger.info('Detector state reset', { event: 'analyzer.state.reset' });
+  1432→  1432→  }
+  1433→  1433→
+  1434→  1434→  // ============== Private Analysis Methods ==============
+  1435→  1435→
+  1436→  1436→  /**
+  1437→  1437→   * Validate transaction data structure
+  1438→  1438→   * @private
+  1439→  1439→   * @param transaction - Transaction to validate
+  1440→  1440→   * @throws {AppError} If validation fails
+  1441→  1441→   */
+  1442→  1442→  private validateTransaction(transaction: TransactionData): void {
+  1443→  1443→    const requiredFields: (keyof TransactionData)[] = [
+  1444→  1444→      'transactionId',
+  1445→  1445→      'amount',
+  1446→  1446→      'currency',
+  1447→  1447→      'timestamp',
+  1448→  1448→      'customerId',
+  1449→  1449→      'deviceFingerprint',
+  1450→  1450→      'ipAddress',
+  1451→  1451→      'countryCode',
+  1452→  1452→      'paymentMethod',
+  1453→  1453→      'merchantId',
+  1454→  1454→      'mcc',
+  1455→  1455→      'channel',
+  1456→  1456→      'sessionId',
+  1457→  1457→    ];
+  1458→  1458→
+  1459→  1459→    const missingFields = requiredFields.filter(
+  1460→  1460→      field => !transaction[field] && transaction[field] !== 0
+  1461→  1461→    );
+  1462→  1462→
+  1463→  1463→    if (missingFields.length > 0) {
+  1464→  1464→      throw new AppError(
+  1465→  1465→        `Missing required transaction fields: ${missingFields.join(', ')}`,
+  1466→  1466→        ErrorCode.VALIDATION_ERROR,
+  1467→  1467→        { context: { missingFields } }
+  1468→  1468→      );
+  1469→  1469→    }
+  1470→  1470→
+  1471→  1471→    if (transaction.amount < 0) {
+  1472→  1472→      throw new AppError(
+  1473→  1473→        'Transaction amount cannot be negative',
+  1474→  1474→        ErrorCode.VALIDATION_ERROR
+  1475→  1475→      );
+  1476→  1476→    }
+  1477→  1477→
+  1478→  1478→    if (!(transaction.timestamp instanceof Date) || isNaN(transaction.timestamp.getTime())) {
+  1479→  1479→      throw new AppError(
+  1480→  1480→        'Invalid transaction timestamp',
+  1481→  1481→        ErrorCode.VALIDATION_ERROR
+  1482→  1482→      );
+  1483→  1483→    }
+  1484→  1484→  }
+  1485→  1485→
+  1486→  1486→  /**
+  1487→  1487→   * Run statistical outlier detection on transaction
+  1488→  1488→   * @private
+  1489→  1489→   * @param transaction - Transaction to analyze
+  1490→  1490→   * @returns Array of detection results
+  1491→  1491→   */
+  1492→  1492→  private runStatisticalAnalysis(transaction: TransactionData): DetectionResult[] {
+  1493→  1493→    const results: DetectionResult[] = [];
+  1494→  1494→    const customerId = transaction.customerId;
+  1495→  1495→    
+  1496→  1496→    // Check for extremely large amounts (absolute threshold, no history needed)
+  1497→  1497→    // This catches obvious anomalies like system max values or unreasonably large transactions
+  1498→  1498→    const EXTREME_AMOUNT_THRESHOLD = 10000000; // 10 million in smallest currency unit
+  1499→  1499→    if (transaction.amount > EXTREME_AMOUNT_THRESHOLD) {
+  1500→  1500→      results.push({
+  1501→  1501→        isAnomalous: true,
+  1502→  1502→        category: AnomalyCategory.STATISTICAL,
+  1503→  1503→        severity: AnomalySeverity.CRITICAL,
+  1504→  1504→        confidence: Math.min(transaction.amount / EXTREME_AMOUNT_THRESHOLD / 10, 1),
+  1505→  1505→        score: transaction.amount / EXTREME_AMOUNT_THRESHOLD,
+  1506→  1506→        threshold: EXTREME_AMOUNT_THRESHOLD,
+  1507→  1507→        actualValue: transaction.amount,
+  1508→  1508→        description: `Extremely large transaction amount detected`,
+  1509→  1509→        details: { 
+  1510→  1510→          amount: transaction.amount,
+  1511→  1511→          threshold: EXTREME_AMOUNT_THRESHOLD,
+  1512→  1512→          method: 'extreme_amount_check',
+  1513→  1513→        },
+  1514→  1514→        detectedAt: new Date(),
+  1515→  1515→      });
+  1516→  1516→    }
+  1517→  1517→    
+  1518→  1518→    // Get historical amounts for this user
+  1519→  1519→    const userHistoryKey = `amounts:${customerId}`;
+  1520→  1520→    let historicalAmounts = this.timeSeriesData.get(userHistoryKey)?.map(p => p.value) || [];
+  1521→  1521→    
+  1522→  1522→    // Add current transaction for analysis
+  1523→  1523→    const allAmounts = [...historicalAmounts, transaction.amount];
+  1524→  1524→    
+  1525→  1525→    if (allAmounts.length >= this.config.minSamplesRequired) {
+  1526→  1526→      // Z-Score Analysis
+  1527→  1527→      try {
+  1528→  1528→        const mean = calculateMean(historicalAmounts);
+  1529→  1529→        const std = calculateStandardDeviation(historicalAmounts);
+  1530→  1530→        
+  1531→  1531→        if (std > 0) {
+  1532→  1532→          const zScore = Math.abs((transaction.amount - mean) / std);
+  1533→  1533→          
+  1534→  1534→          if (zScore > this.thresholds.zScoreThreshold) {
+  1535→  1535→            results.push({
+  1536→  1536→              isAnomalous: true,
+  1537→  1537→              category: AnomalyCategory.STATISTICAL,
+  1538→  1538→              severity: this.scoreToSeverity(zScore / this.thresholds.zScoreThreshold),
+  1539→  1539→              confidence: clamp(zScore / (this.thresholds.zScoreThreshold * 2), 0, 1),
+  1540→  1540→              score: zScore,
+  1541→  1541→              threshold: this.thresholds.zScoreThreshold,
+  1542→  1542→              actualValue: transaction.amount,
+  1543→  1543→              description: `Transaction amount Z-score (${zScore.toFixed(2)}) exceeds threshold`,
+  1544→  1544→              details: { mean, stdDev: std, method: 'z_score' },
+  1545→  1545→              detectedAt: new Date(),
+  1546→  1546→            });
+  1547→  1547→          }
+  1548→  1548→        }
+  1549→  1549→      } catch (error) {
+  1550→  1550→        logger.warn('Z-score calculation failed', { event: 'analyzer.zscore.error', error: error as Error });
+  1551→  1551→      }
+  1552→  1552→      
+  1553→  1553→      // IQR Analysis
+  1554→  1554→      try {
+  1555→  1555→        const { q1, q3 } = calculateQuartiles(allAmounts);
+  1556→  1556→        const iqr = q3 - q1;
+  1557→  1557→        const lowerBound = q1 - this.thresholds.iqrMultiplier * iqr;
+  1558→  1558→        const upperBound = q3 + this.thresholds.iqrMultiplier * iqr;
+  1559→  1559→        
+  1560→  1560→        if (transaction.amount < lowerBound || transaction.amount > upperBound) {
+  1561→  1561→          const deviation = transaction.amount > upperBound 
+  1562→  1562→            ? transaction.amount - upperBound 
+  1563→  1563→            : lowerBound - transaction.amount;
+  1564→  1564→            
+  1565→  1565→          results.push({
+  1566→  1566→            isAnomalous: true,
+  1567→  1567→            category: AnomalyCategory.STATISTICAL,
+  1568→  1568→            severity: deviation > iqr ? AnomalySeverity.HIGH : AnomalySeverity.MEDIUM,
+  1569→  1569→            confidence: clamp(deviation / (iqr * 2), 0, 1),
+  1570→  1570→            score: deviation / iqr,
+  1571→  1571→            threshold: this.thresholds.iqrMultiplier,
+  1572→  1572→            actualValue: transaction.amount,
+  1573→  1573→            description: `Transaction amount outside IQR bounds [${lowerBound}, ${upperBound}]`,
+  1574→  1574→            details: { q1, q3, iqr, lowerBound, upperBound, method: 'iqr' },
+  1575→  1575→            detectedAt: new Date(),
+  1576→  1576→          });
+  1577→  1577→        }
+  1578→  1578→      } catch (error) {
+  1579→  1579→        logger.warn('IQR calculation failed', { event: 'analyzer.iqr.error', error: error as Error });
+  1580→  1580→      }
+  1581→  1581→      
+  1582→  1582→      // Modified Z-Score (using MAD)
+  1583→  1583→      try {
+  1584→  1584→        const mad = calculateMAD(historicalAmounts);
+  1585→  1585→        const median = calculateMedian(historicalAmounts);
+  1586→  1586→        
+  1587→  1587→        if (mad > 0) {
+  1588→  1588→          const modifiedZScore = (0.6745 * (transaction.amount - median)) / mad;
+  1589→  1589→          const absModifiedZScore = Math.abs(modifiedZScore);
+  1590→  1590→          
+  1591→  1591→          if (absModifiedZScore > this.thresholds.modifiedZScoreThreshold) {
+  1592→  1592→            results.push({
+  1593→  1593→              isAnomalous: true,
+  1594→  1594→              category: AnomalyCategory.STATISTICAL,
+  1595→  1595→              severity: this.scoreToSeverity(absModifiedZScore / this.thresholds.modifiedZScoreThreshold),
+  1596→  1596→              confidence: clamp(absModifiedZScore / (this.thresholds.modifiedZScoreThreshold * 2), 0, 1),
+  1597→  1597→              score: absModifiedZScore,
+  1598→  1598→              threshold: this.thresholds.modifiedZScoreThreshold,
+  1599→  1599→              actualValue: transaction.amount,
+  1600→  1600→              description: `Modified Z-score (${absModifiedZScore.toFixed(2)}) exceeds threshold`,
+  1601→  1601→              details: { median, mad, method: 'modified_z_score' },
+  1602→  1602→              detectedAt: new Date(),
+  1603→  1603→            });
+  1604→  1604→          }
+  1605→  1605→        }
+  1606→  1606→      } catch (error) {
+  1607→  1607→        logger.warn('Modified Z-score calculation failed', { 
+  1608→  1608→          event: 'analyzer.modified_zscore.error', 
+  1609→  1609→          error: error as Error 
+  1610→  1610→        });
+  1611→  1611→      }
+  1612→  1612→    }
+  1613→  1613→    
+  1614→  1614→    return results;
+  1615→  1615→  }
+  1616→  1616→
+  1617→  1617→  /**
+  1618→  1618→   * Run temporal/time-based analysis on transaction
+  1619→  1619→   * @private
+  1620→  1620→   * @param transaction - Transaction to analyze
+  1621→  1621→   * @returns Array of detection results
+  1622→  1622→   */
+  1623→  1623→  private runTemporalAnalysis(transaction: TransactionData): DetectionResult[] {
+  1624→  1624→    const results: DetectionResult[] = [];
+  1625→  1625→    const profile = this.userProfiles.get(transaction.customerId);
+  1626→  1626→    
+  1627→  1627→    if (!profile || profile.totalTransactions < 5) {
+  1628→  1628→      return results;
+  1629→  1629→    }
+  1630→  1630→    
+  1631→  1631→    const txnHour = transaction.timestamp.getHours();
+  1632→  1632→    const txnDay = transaction.timestamp.getDay();
+  1633→  1633→    
+  1634→  1634→    // Check if transaction time is unusual for this user
+  1635→  1635→    if (profile.typicalHours.length > 0 && !profile.typicalHours.includes(txnHour)) {
+  1636→  1636→      // Calculate how unusual this hour is
+  1637→  1637→      const hourDeviation = this.calculateHourDeviation(txnHour, profile.typicalHours);
+  1638→  1638→      
+  1639→  1639→      if (hourDeviation > this.thresholds.timeDeviationStd / 2) { // More sensitive for unusual hour detection
+  1640→  1640→        results.push({
+  1641→  1641→          isAnomalous: true,
+  1642→  1642→          category: AnomalyCategory.TEMPORAL,
+  1643→  1643→          severity: AnomalySeverity.LOW,
+  1644→  1644→          confidence: clamp(hourDeviation / (this.thresholds.timeDeviationStd * 2), 0, 1),
+  1645→  1645→          score: hourDeviation,
+  1646→  1646→          threshold: this.thresholds.timeDeviationStd / 2,
+  1647→  1647→          actualValue: txnHour,
+  1648→  1648→          description: `Unusual transaction hour (${txnHour}:00) for user`,
+  1649→  1649→          details: { 
+  1650→  1650→            typicalHours: profile.typicalHours, 
+  1651→  1651→            currentHour: txnHour,
+  1652→  1652→            deviation: hourDeviation,
+  1653→  1653→          },
+  1654→  1654→          detectedAt: new Date(),
+  1655→  1655→        });
+  1656→  1656→      }
+  1657→  1657→    }
+  1658→  1658→    
+  1659→  1659→    // Check if day of week is unusual
+  1660→  1660→    if (profile.typicalDays.length > 0 && !profile.typicalDays.includes(txnDay)) {
+  1661→  1661→      results.push({
+  1662→  1662→        isAnomalous: true,
+  1663→  1663→        category: AnomalyCategory.TEMPORAL,
+  1664→  1664→        severity: AnomalySeverity.INFO,
+  1665→  1665→        confidence: 0.5,
+  1666→  1666→        score: 1,
+  1667→  1667→        threshold: 0,
+  1668→  1668→        actualValue: txnDay,
+  1669→  1669→        description: `Transaction on unusual day of week for user`,
+  1670→  1670→        details: { typicalDays: profile.typicalDays, currentDay: txnDay },
+  1671→  1671→        detectedAt: new Date(),
+  1672→  1672→      });
+  1673→  1673→    }
+  1674→  1674→    
+  1675→  1675→    // Check time since last transaction
+  1676→  1676→    const timeSinceLastTxn = transaction.timestamp.getTime() - profile.lastTransactionDate.getTime();
+  1677→  1677→    const timeSinceLastMinutes = timeSinceLastTxn / 60000;
+  1678→  1678→    
+  1679→  1679→    if (profile.avgTimeBetweenTxnMinutes > 0) {
+  1680→  1680→      const timeRatio = timeSinceLastMinutes / profile.avgTimeBetweenTxnMinutes;
+  1681→  1681→      
+  1682→  1682→      // Flag if transaction happens much sooner than expected (potential automated attack)
+  1683→  1683→      if (timeRatio < 0.1 && timeSinceLastMinutes < 1) {
+  1684→  1684→        results.push({
+  1685→  1685→          isAnomalous: true,
+  1686→  1686→          category: AnomalyCategory.TEMPORAL,
+  1687→  1687→          severity: AnomalySeverity.HIGH,
+  1688→  1688→          confidence: 0.9,
+  1689→  1689→          score: 1 / Math.max(timeRatio, 0.01),
+  1690→  1690→          threshold: 0.1,
+  1691→  1691→          actualValue: timeSinceLastMinutes,
+  1692→  1692→          description: 'Rapid successive transactions detected',
+  1693→  1693→          details: { 
+  1694→  1694→            timeSinceLastMinutes: timeSinceLastMinutes.toFixed(2),
+  1695→  1695→            averageInterval: profile.avgTimeBetweenTxnMinutes,
+  1696→  1696→          },
+  1697→  1697→          detectedAt: new Date(),
+  1698→  1698→        });
+  1699→  1699→      }
+  1700→  1700→    }
+  1701→  1701→    
+  1702→  1702→    return results;
+  1703→  1703→  }
+  1704→  1704→
+  1705→  1705→  /**
+  1706→  1706→   * Run behavioral analysis on transaction
+  1707→  1707→   * @private
+  1708→  1708→   * @param transaction - Transaction to analyze
+  1709→  1709→   * @returns Array of detection results
+  1710→  1710→   */
+  1711→  1711→  private runBehavioralAnalysis(transaction: TransactionData): DetectionResult[] {
+  1712→  1712→    const results: DetectionResult[] = [];
+  1713→  1713→    const profile = this.userProfiles.get(transaction.customerId);
+  1714→  1714→    
+  1715→  1715→    if (!profile || profile.totalTransactions < 3) {
+  1716→  1716→      return results;
+  1717→  1717→    }
+  1718→  1718→    
+  1719→  1719→    // Amount deviation analysis
+  1720→  1720→    if (profile.stdAmount > 0) {
+  1721→  1721→      const amountDeviation = Math.abs(transaction.amount - profile.avgAmount) / profile.stdAmount;
+  1722→  1722→      const percentDeviation = Math.abs((transaction.amount - profile.avgAmount) / profile.avgAmount) * 100;
+  1723→  1723→      
+  1724→  1724→      if (percentDeviation > this.thresholds.amountDeviationPercent) {
+  1725→  1725→        results.push({
+  1726→  1726→          isAnomalous: true,
+  1727→  1727→          category: AnomalyCategory.BEHAVIORAL,
+  1728→  1728→          severity: percentDeviation > this.thresholds.amountDeviationPercent * 2 
+  1729→  1729→            ? AnomalySeverity.HIGH 
+  1730→  1730→            : AnomalySeverity.MEDIUM,
+  1731→  1731→          confidence: clamp(percentDeviation / (this.thresholds.amountDeviationPercent * 2), 0, 1),
+  1732→  1732→          score: amountDeviation,
+  1733→  1733→          threshold: this.thresholds.amountDeviationPercent,
+  1734→  1734→          actualValue: transaction.amount,
+  1735→  1735→          description: `Transaction amount deviates ${percentDeviation.toFixed(1)}% from user average`,
+  1736→  1736→          details: {
+  1737→  1737→            userAverage: profile.avgAmount,
+  1738→  1738→            userStdDev: profile.stdAmount,
+  1739→  1739→            percentDeviation: percentDeviation.toFixed(2),
+  1740→  1740→          },
+  1741→  1741→          detectedAt: new Date(),
+  1742→  1742→        });
+  1743→  1743→      }
+  1744→  1744→    }
+  1745→  1745→    
+  1746→  1746→    // New payment method check
+  1747→  1747→    if (!profile.preferredMethods.has(transaction.paymentMethod)) {
+  1748→  1748→      results.push({
+  1749→  1749→        isAnomalous: true,
+  1750→  1750→        category: AnomalyCategory.BEHAVIORAL,
+  1751→  1751→        severity: AnomalySeverity.LOW,
+  1752→  1752→        confidence: 0.6,
+  1753→  1753→        score: 1,
+  1754→  1754→        threshold: 0,
+  1755→  1755→        actualValue: 0,
+  1756→  1756→        description: `Using new payment method: ${transaction.paymentMethod}`,
+  1757→  1757→        details: {
+  1758→  1758→          newMethod: transaction.paymentMethod,
+  1759→  1759→          usualMethods: Array.from(profile.preferredMethods),
+  1760→  1760→        },
+  1761→  1761→        detectedAt: new Date(),
+  1762→  1762→      });
+  1763→  1763→    }
+  1764→  1764→    
+  1765→  1765→    // Velocity check against user's normal behavior
+  1766→  1766→    const expectedDailyTxns = profile.dailyVelocity;
+  1767→  1767→    if (expectedDailyTxns > 0) {
+  1768→  1768→      // This would typically compare against recent transaction count
+  1769→  1769→      // For now, we log the velocity for potential future alerts
+  1770→  1770→      logger.debug('Behavioral velocity check', {
+  1771→  1771→        event: 'analyzer.behavioral.velocity',
+  1772→  1772→        metadata: {
+  1773→  1773→          customerId: transaction.customerId,
+  1774→  1774→          dailyVelocity: profile.dailyVelocity,
+  1775→  1775→          expectedDaily: expectedDailyTxns,
+  1776→  1776→        },
+  1777→  1777→      });
+  1778→  1778→    }
+  1779→  1779→    
+  1780→  1780→    return results;
+  1781→  1781→  }
+  1782→  1782→
+  1783→  1783→  /**
+  1784→  1784→   * Run geographic analysis on transaction
+  1785→  1785→   * @private
+  1786→  1786→   * @param transaction - Transaction to analyze
+  1787→  1787→   * @returns Array of detection results
+  1788→  1788→   */
+  1789→  1789→  private runGeographicAnalysis(transaction: TransactionData): DetectionResult[] {
+  1790→  1790→    const results: DetectionResult[] = [];
+  1791→  1791→    const profile = this.userProfiles.get(transaction.customerId);
+  1792→  1792→    
+  1793→  1793→    if (!profile) {
+  1794→  1794→      return results;
+  1795→  1795→    }
+  1796→  1796→    
+  1797→  1797→    // New country check
+  1798→  1798→    const isNewCountry = !profile.knownLocations.has(transaction.countryCode);
+  1799→  1799→    
+  1800→  1800→    if (isNewCountry && profile.knownLocations.size > 0) {
+  1801→  1801→      const riskScore = this.calculateLocationRisk(transaction.countryCode, profile);
+  1802→  1802→      
+  1803→  1803→      if (riskScore > this.thresholds.newLocationRiskThreshold) {
+  1804→  1804→        results.push({
+  1805→  1805→          isAnomalous: true,
+  1806→  1806→          category: AnomalyCategory.GEOGRAPHIC,
+  1807→  1807→          severity: riskScore > 80 ? AnomalySeverity.HIGH : AnomalySeverity.MEDIUM,
+  1808→  1808→          confidence: clamp(riskScore / 100, 0, 1),
+  1809→  1809→          score: riskScore,
+  1810→  1810→          threshold: this.thresholds.newLocationRiskThreshold,
+  1811→  1811→          actualValue: riskScore,
+  1812→  1812→          description: `Transaction from new/unusual location: ${transaction.countryCode}`,
+  1813→  1813→          details: {
+  1814→  1814→            newCountry: transaction.countryCode,
+  1815→  1815→            knownCountries: Array.from(profile.knownLocations),
+  1816→  1816→            riskScore,
+  1817→  1817→          },
+  1818→  1818→          detectedAt: new Date(),
+  1819→  1819→        });
+  1820→  1820→      }
+  1821→  1821→    }
+  1822→  1822→    
+  1823→  1823→    // Distance/velocity analysis if coordinates available
+  1824→  1824→    if (transaction.latitude && transaction.longitude) {
+  1825→  1825→      const userGeoHistory = this.geoHistory.get(transaction.customerId) || [];
+  1826→  1826→      
+  1827→  1827→      if (userGeoHistory.length > 0) {
+  1828→  1828→        const lastLocation = userGeoHistory[userGeoHistory.length - 1];
+  1829→  1829→        const distance = calculateHaversineDistance(
+  1830→  1830→          lastLocation.latitude,
+  1831→  1831→          lastLocation.longitude,
+  1832→  1832→          transaction.latitude,
+  1833→  1833→          transaction.longitude
+  1834→  1834→        );
+  1835→  1835→        
+  1836→  1836→        const timeDiffMinutes = (transaction.timestamp.getTime() - lastLocation.timestamp.getTime()) / 60000;
+  1837→  1837→        
+  1838→  1838→        // Check for impossible travel
+  1839→  1839→        if (distance > this.thresholds.maxGeoDistanceKm) {
+  1840→  1840→          if (timeDiffMinutes < this.thresholds.minTimeForDistanceMinutes) {
+  1841→  1841→            const requiredTime = distance / 900; // Assuming max 900 km/h travel speed
+  1842→  1842→            
+  1843→  1843→            results.push({
+  1844→  1844→              isAnomalous: true,
+  1845→  1845→              category: AnomalyCategory.GEOGRAPHIC,
+  1846→  1846→              severity: AnomalySeverity.CRITICAL,
+  1847→  1847→              confidence: 0.95,
+  1848→  1848→              score: distance,
+  1849→  1849→              threshold: this.thresholds.maxGeoDistanceKm,
+  1850→  1850→              actualValue: distance,
+  1851→  1851→              description: `Impossible travel detected: ${distance.toFixed(0)}km in ${timeDiffMinutes.toFixed(0)}min`,
+  1852→  1852→              details: {
+  1853→  1853→                distanceKm: distance.toFixed(2),
+  1854→  1854→                timeDiffMinutes: timeDiffMinutes.toFixed(2),
+  1855→  1855→                lastLocation: {
+  1856→  1856→                  latitude: lastLocation.latitude,
+  1857→  1857→                  longitude: lastLocation.longitude,
+  1858→  1858→                  countryCode: lastLocation.countryCode,
+  1859→  1859→                },
+  1860→  1860→                currentLocation: {
+  1861→  1861→                  latitude: transaction.latitude,
+  1862→  1862→                  longitude: transaction.longitude,
+  1863→  1863→                  countryCode: transaction.countryCode,
+  1864→  1864→                },
+  1865→  1865→                estimatedMinTravelTime: requiredTime,
+  1866→  1866→              },
+  1867→  1867→              detectedAt: new Date(),
+  1868→  1868→            });
+  1869→  1869→          }
+  1870→  1870→        }
+  1871→  1871→      }
+  1872→  1872→      
+  1873→  1873→      // Update geo history
+  1874→  1874→      const geoPoint: GeoPoint = {
+  1875→  1875→        latitude: transaction.latitude,
+  1876→  1876→        longitude: transaction.longitude,
+  1877→  1877→        countryCode: transaction.countryCode,
+  1878→  1878→        timestamp: transaction.timestamp,
+  1879→  1879→      };
+  1880→  1880→      
+  1881→  1881→      userGeoHistory.push(geoPoint);
+  1882→  1882→      if (userGeoHistory.length > 100) {
+  1883→  1883→        userGeoHistory.shift();
+  1884→  1884→      }
+  1885→  1885→      this.geoHistory.set(transaction.customerId, userGeoHistory);
+  1886→  1886→    }
+  1887→  1887→    
+  1888→  1888→    return results;
+  1889→  1889→  }
+  1890→  1890→
+  1891→  1891→  /**
+  1892→  1892→   * Run device fingerprint analysis on transaction
+  1893→  1893→   * @private
+  1894→  1894→   * @param transaction - Transaction to analyze
+  1895→  1895→   * @returns Array of detection results
+  1896→  1896→   */
+  1897→  1897→  private runDeviceAnalysis(transaction: TransactionData): DetectionResult[] {
+  1898→  1898→    const results: DetectionResult[] = [];
+  1899→  1899→    const profile = this.userProfiles.get(transaction.customerId);
+  1900→  1900→    const deviceProfile = this.deviceProfiles.get(transaction.deviceFingerprint);
+  1901→  1901→    
+  1902→  1902→    if (!profile) {
+  1903→  1903→      return results;
+  1904→  1904→    }
+  1905→  1905→    
+  1906→  1906→    // New device check
+  1907→  1907→    const isNewDevice = !profile.knownDevices.has(transaction.deviceFingerprint);
+  1908→  1908→    
+  1909→  1909→    if (isNewDevice && profile.knownDevices.size > 0) {
+  1910→  1910→      const deviceRisk = this.calculateDeviceRisk(transaction.deviceFingerprint, profile);
+  1911→  1911→      
+  1912→  1912→      if (deviceRisk > this.thresholds.newDeviceRiskThreshold) {
+  1913→  1913→        results.push({
+  1914→  1914→          isAnomalous: true,
+  1915→  1915→          category: AnomalyCategory.DEVICE,
+  1916→  1916→          severity: deviceRisk > 80 ? AnomalySeverity.HIGH : AnomalySeverity.MEDIUM,
+  1917→  1917→          confidence: clamp(deviceRisk / 100, 0, 1),
+  1918→  1918→          score: deviceRisk,
+  1919→  1919→          threshold: this.thresholds.newDeviceRiskThreshold,
+  1920→  1920→          actualValue: deviceRisk,
+  1921→  1921→          description: 'Transaction from new/high-risk device',
+  1922→  1922→          details: {
+  1923→  1923→            deviceFingerprint: transaction.deviceFingerprint.substring(0, 16) + '...',
+  1924→  1924→            deviceRisk,
+  1925→  1925→            knownDeviceCount: profile.knownDevices.size,
+  1926→  1926→          },
+  1927→  1927→          detectedAt: new Date(),
+  1928→  1928→        });
+  1929→  1929→      }
+  1930→  1930→    }
+  1931→  1931→    
+  1932→  1932→    // Check if device is flagged
+  1933→  1933→    if (deviceProfile?.isFlagged) {
+  1934→  1934→      results.push({
+  1935→  1935→        isAnomalous: true,
+  1936→  1936→        category: AnomalyCategory.DEVICE,
+  1937→  1937→        severity: AnomalySeverity.CRITICAL,
+  1938→  1938→        confidence: 0.99,
+  1939→  1939→        score: 100,
+  1940→  1940→        threshold: 0,
+  1941→  1941→        actualValue: 1,
+  1942→  1942→        description: 'Transaction from flagged/fraudulent device',
+  1943→  1943→        details: {
+  1944→  1944→          deviceFingerprint: transaction.deviceFingerprint.substring(0, 16) + '...',
+  1945→  1945→          flagReason: 'Previously associated with fraudulent activity',
+  1946→  1946→        },
+  1947→  1947→        detectedAt: new Date(),
+  1948→  1948→      });
+  1949→  1949→    }
+  1950→  1950→    
+  1951→  1951→    // Device sharing detection (multiple accounts on same device)
+  1952→  1952→    if (deviceProfile && deviceProfile.uniqueCustomers >= 3) {
+  1953→  1953→      const sharingRatio = deviceProfile.uniqueCustomers / Math.max(deviceProfile.transactionCount, 1);
+  1954→  1954→      
+  1955→  1955→      if (sharingRatio > 0.25) { // Lowered threshold for better detection
+  1956→  1956→        results.push({
+  1957→  1957→          isAnomalous: true,
+  1958→  1958→          category: AnomalyCategory.DEVICE,
+  1959→  1959→          severity: AnomalySeverity.MEDIUM,
+  1960→  1960→          confidence: clamp(sharingRatio, 0, 1),
+  1961→  1961→          score: sharingRatio * 100,
+  1962→  1962→          threshold: 25,
+  1963→  1963→          actualValue: deviceProfile.uniqueCustomers,
+  1964→  1964→          description: `Device shared by ${deviceProfile.uniqueCustomers} different accounts`,
+  1965→  1965→          details: {
+  1966→  1966→            uniqueCustomers: deviceProfile.uniqueCustomers,
+  1967→  1967→            totalTransactions: deviceProfile.transactionCount,
+  1968→  1968→            sharingRatio: sharingRatio.toFixed(2),
+  1969→  1969→          },
+  1970→  1970→          detectedAt: new Date(),
+  1971→  1971→        });
+  1972→  1972→      }
+  1973→  1973→    }
+  1974→  1974→    
+  1975→  1975→    return results;
+  1976→  1976→  }
+  1977→  1977→
+  1978→  1978→  /**
+  1979→  1979→   * Run velocity analysis on transaction
+  1980→  1980→   * @private
+  1981→  1981→   * @param transaction - Transaction to analyze
+  1982→  1982→   * @returns Array of detection results
+  1983→  1983→   */
+  1984→  1984→  private runVelocityAnalysis(transaction: TransactionData): DetectionResult[] {
+  1985→  1985→    const results: DetectionResult[] = [];
+  1986→  1986→    
+  1987→  1987→    // Get recent transactions from sliding window
+  1988→  1988→    const recentTransactions = this.slidingWindow.getInWindow(new Date());
+  1989→  1989→    const now = transaction.timestamp.getTime();
+  1990→  1990→    
+  1991→  1991→    // Count transactions in last minute for this user
+  1992→  1992→    const recentUserTxns = recentTransactions.filter(t => 
+  1993→  1993→      t.customerId === transaction.customerId &&
+  1994→  1994→      now - t.timestamp.getTime() <= 60000
+  1995→  1995→    );
+  1996→  1996→    
+  1997→  1997→    if (recentUserTxns.length >= this.thresholds.maxVelocityPerMinute) {
+  1998→  1998→      results.push({
+  1999→  1999→        isAnomalous: true,
+  2000→  2000→        category: AnomalyCategory.VELOCITY,
+
+[showing lines 1-2000 of 2002; use offset=2001 with limit to continue reading]

@@ -1,0 +1,1862 @@
+     1→     1→/**
+     2→     2→ * Enterprise Circuit Breaker & Resilience Patterns Library
+     3→     3→ * for SSM-Pay Payment Platform
+     4→     4→ *
+     5→     5→ * This module provides comprehensive resilience patterns including:
+     6→     6→ * - Circuit Breaker (closed/open/half-open states)
+     7→     7→ * - Retry with exponential backoff
+     8→     8→ * - Bulkhead isolation
+     9→     9→ * - Timeout handling
+    10→    10→ * - Fallback mechanisms
+    11→    11→ * - Rate limiting integration
+    12→    12→ * - Health check callbacks
+    13→    13→ * - State persistence and recovery
+    14→    14→ *
+    15→    15→ * @module services/resilience
+    16→    16→ */
+    17→    17→
+    18→    18→import { logger } from '@/lib/logger';
+    19→    19→import { AppError, ErrorCode, wrapError } from '@/lib/errors';
+    20→    20→
+    21→    21→// ============== Type Definitions ==============
+    22→    22→
+    23→    23→/**
+    24→    24→ * Circuit Breaker States
+    25→    25→ * - CLOSED: Normal operation, requests flow through
+    26→    26→ * - OPEN: Failing, requests are rejected immediately
+    27→    27→ * - HALF_OPEN: Testing if service has recovered
+    28→    28→ */
+    29→    29→export type CircuitState = 'CLOSED' | 'OPEN' | 'HALF_OPEN';
+    30→    30→
+    31→    31→/**
+    32→    32→ * Result of a circuit breaker protected execution
+    33→    33→ */
+    34→    34→export interface ExecutionResult<T> {
+    35→    35→  /** Whether execution was successful */
+    36→    36→  success: boolean;
+    37→    37→  /** The result value (if successful) */
+    38→    38→  value?: T;
+    39→    39→  /** The error (if failed) */
+    40→    40→  error?: Error;
+    41→    41→  /** Execution metrics */
+    42→    42→  metrics: ExecutionMetrics;
+    43→    43→}
+    44→    44→
+    45→    45→/**
+    46→    46→ * Metrics collected during execution
+    47→    47→ */
+    48→    48→export interface ExecutionMetrics {
+    49→    49→  /** Total time taken in milliseconds */
+    50→    50→  durationMs: number;
+    51→    51→  /** Number of retry attempts */
+    52→    52→  attempts: number;
+    53→    53→  /** Whether circuit breaker was used */
+    54→    54→  circuitBreakerUsed: boolean;
+    55→    55→  /** Whether fallback was invoked */
+    56→    56→  fallbackInvoked: boolean;
+    57→    57→  /** Timestamp of execution */
+    58→    58→  timestamp: Date;
+    59→    59→}
+    60→    60→
+    61→    61→/**
+    62→    62→ * Configuration options for Circuit Breaker
+    63→    63→ */
+    64→    64→export interface CircuitBreakerConfig {
+    65→    65→  /** Unique name/identifier for this circuit breaker */
+    66→    66→  name: string;
+    67→    67→  /** Number of failures before opening the circuit (default: 5) */
+    68→    68→  failureThreshold?: number;
+    69→    69→  /** Time in ms before attempting to reset (default: 30000) */
+    70→    70→  resetTimeout?: number;
+    71→    71→  /** Number of successful calls in half-open to close circuit (default: 3) */
+    72→    72→  halfOpenSuccessThreshold?: number;
+    73→    73→  /** Percentage of calls that can fail before opening (default: 50) */
+    74→    74→  failureRateThreshold?: number;
+    75→    75→  /** Minimum number of calls to calculate rate (default: 10) */
+    76→    76→  volumeThreshold?: number;
+    77→    77→  /** Window size in ms for sliding window (default: 60000) */
+    78→    78→  slidingWindowSize?: number;
+    79→    79→  /** Number of buckets in sliding window (default: 10) */
+    80→    80→  slidingWindowBuckets?: number;
+    81→    81→  /** Whether to record slow calls as failures (default: true) */
+    82→    82→  slowCallDurationEnabled?: boolean;
+    83→    83→  /** Duration in ms to consider a call slow (default: 5000) */
+    84→    84→  slowCallDurationThreshold?: number;
+    85→    85→  /** Enable automatic state persistence (default: false) */
+    86→    86→  enablePersistence?: boolean;
+    87→    87→  /** Custom event handler for state changes */
+    88→    88→  onStateChange?: (state: CircuitState, previousState: CircuitState) => void;
+    89→    89→}
+    90→    90→
+    91→    91→/**
+    92→    92→ * Statistics snapshot for circuit breaker
+    93→    93→ */
+    94→    94→export interface CircuitBreakerStats {
+    95→    95→  /** Current state */
+    96→    96→  state: CircuitState;
+    97→    97→  /** Total number of successful calls */
+    98→    98→  successfulCalls: number;
+    99→    99→  /** Total number of failed calls */
+   100→   100→  failedCalls: number;
+   101→   101→  /** Total number of rejected calls (circuit open) */
+   102→   102→  rejectedCalls: number;
+   103→   103→  /** Current failure rate percentage */
+   104→   104→  failureRate: number;
+   105→   105→  /** Number of slow calls */
+   106→   106→  slowCalls: number;
+   107→   107→  /** When the circuit was last opened (if applicable) */
+   108→   108→  openedAt?: Date;
+   109→   109→  /** When the circuit can next attempt half-open (if applicable) */
+   110→   110→  nextRetryAt?: Date;
+   111→   111→}
+   112→   112→
+   113→   113→/**
+   114→   114→ * Sliding window bucket for tracking call statistics
+   115→   115→ */
+   116→   116→interface SlidingWindowBucket {
+   117→   117→  /** Start time of this bucket */
+   118→   118→  startTime: number;
+   119→   119→  /** Number of successful calls */
+   120→   120→  successful: number;
+   121→   121→  /** Number of failed calls */
+   122→   122→  failed: number;
+   123→   123→  /** Number of slow calls */
+   124→   124→  slow: number;
+   125→   125→  /** Number of total calls */
+   126→   126→  total: number;
+   127→   127→}
+   128→   128→
+   129→   129→/**
+   130→   130→ * Persisted circuit breaker state for recovery
+   131→   131→ */
+   132→   132→export interface PersistedCircuitState {
+   133→   133→  /** Circuit breaker name */
+   134→   134→  name: string;
+   135→   135→  /** Current state */
+   136→   136→  state: CircuitState;
+   137→   137→  /** When state was last updated */
+   138→   138→  updatedAt: string;
+   139→   139→  /** Failure count at time of persist */
+   140→   140→  failureCount: number;
+   141→   141→  /** When circuit was opened (if applicable) */
+   142→   142→  openedAt?: string;
+   143→   143→  /** Version for migration support */
+   144→   144→  version: number;
+   145→   145→}
+   146→   146→
+   147→   147→/**
+   148→   148→ * Configuration options for Retry with backoff
+   149→   149→ */
+   150→   150→export interface RetryConfig {
+   151→   151→  /** Maximum number of retry attempts (default: 3) */
+   152→   152→  maxAttempts?: number;
+   153→   153→  /** Initial delay in ms before first retry (default: 1000) */
+   154→   154→  initialDelayMs?: number;
+   155→   155→  /** Maximum delay between retries (default: 30000) */
+   156→   156→  maxDelayMs?: number;
+   157→   157→  /** Backoff multiplier (default: 2.0) */
+   158→   158→  multiplier?: number;
+   159→   159→  /** Add randomness to prevent thundering herd (default: 0.1 = 10%) */
+   160→   160→  jitterFactor?: number;
+   161→   161→  /** Errors that should trigger retry (empty = all errors) */
+   162→   162→  retryableErrors?: ErrorCode[];
+   163→   163→  /** HTTP status codes that trigger retry (empty = all 5xx) */
+   164→   164→  retryableStatusCodes?: number[];
+   165→   165→  /** Callback before each retry attempt */
+   166→   166→  onRetry?: (error: Error, attempt: number) => void;
+   167→   167→}
+   168→   168→
+   169→   169→/**
+   170→   170→ * Configuration options for Bulkhead pattern
+   171→   171→ */
+   172→   172→export interface BulkheadConfig {
+   173→   173→  /** Unique name for this bulkhead */
+   174→   174→  name: string;
+   175→   175→  /** Maximum concurrent executions (default: 10) */
+   176→   176→  maxConcurrent?: number;
+   177→   177→  /** Maximum number of waiting tasks in queue (default: 50) */
+   178→   178→  maxWaitQueueLength?: number;
+   179→   179→  /** Timeout in ms for queue wait (default: 5000) */
+   180→   180→  maxWaitTimeMs?: number;
+   181→   181→}
+   182→   182→
+   183→   183→/**
+   184→   184→ * Statistics for bulkhead
+   185→   185→ */
+   186→   186→export interface BulkheadStats {
+   187→   187→  /** Current number of running executions */
+   188→   188→  currentRunning: number;
+   189→   189→  /** Current number of waiting tasks */
+   190→   190→  currentWaiting: number;
+   191→   191→  /** Total accepted executions */
+   192→   192→  totalAccepted: number;
+   193→   193→  /** Total rejected executions */
+   194→   194→  totalRejected: number;
+   195→   195→}
+   196→   196→
+   197→   197→/**
+   198→   198→ * Configuration options for Timeout
+   199→   199→ */
+   200→   200→export interface TimeoutConfig {
+   201→   201→  /** Timeout duration in milliseconds (default: 10000) */
+   202→   202→  timeoutMs?: number;
+   203→   203→  /** Whether to cancel the operation on timeout (default: true) */
+   204→   204→  cancelOnTimeout?: boolean;
+   205→   205→  /** Custom error message on timeout */
+   206→   206→  timeoutErrorMessage?: string;
+   207→   207→}
+   208→   208→
+   209→   209→/**
+   210→   210→ * Fallback function type
+   211→   211→ */
+   212→   212→export type FallbackFunction<T> = (error: Error, context: Record<string, unknown>) => T | Promise<T>;
+   213→   213→
+   214→   214→/**
+   215→   215→ * Health check result
+   216→   216→ */
+   217→   217→export interface HealthCheckResult {
+   218→   218→  /** Whether the service is healthy */
+   219→   219→  healthy: boolean;
+   220→   220→  /** Additional health details */
+   221→   221→  details: Record<string, unknown>;
+   222→   222→  /** When check was performed */
+   223→   223→  checkedAt: Date;
+   224→   224→  /** Optional latency measurement */
+   225→   225→  latencyMs?: number;
+   226→   226→}
+   227→   227→
+   228→   228→/**
+   229→   229→ * Health check callback function
+   230→   230→ */
+   231→   231→export type HealthCheckCallback = () => Promise<HealthCheckResult>;
+   232→   232→
+   233→   233→/**
+   234→   234→ * Rate limiter configuration
+   235→   235→ */
+   236→   236→export interface RateLimiterConfig {
+   237→   237→  /** Maximum requests allowed in window (default: 100) */
+   238→   238→  limit?: number;
+   239→   239→  /** Time window in ms (default: 60000) */
+   240→   240→  windowMs?: number;
+   241→   241→  /** Name/key for this limiter */
+   242→   242→  key?: string;
+   243→   243→}
+   244→   244→
+   245→   245→/**
+   246→   246→ * Combined resilience configuration for easy setup
+   247→   247→ */
+   248→   248→export interface ResilienceConfig {
+   249→   249→  /** Circuit breaker configuration */
+   250→   250→  circuitBreaker?: Partial<CircuitBreakerConfig>;
+   251→   251→  /** Retry configuration */
+   252→   252→  retry?: Partial<RetryConfig>;
+   253→   253→  /** Bulkhead configuration */
+   254→   254→  bulkhead?: Partial<BulkheadConfig>;
+   255→   255→  /** Timeout configuration */
+   256→   256→  timeout?: Partial<TimeoutConfig>;
+   257→   257→  /** Fallback function */
+   258→   258→  fallback?: FallbackFunction<unknown>;
+   259→   259→  /** Health check callback */
+   260→   260→  healthCheck?: HealthCheckCallback;
+   261→   261→  /** Rate limiter configuration */
+   262→   262→  rateLimiter?: Partial<RateLimiterConfig>;
+   263→   263→}
+   264→   264→
+   265→   265→// ============== Circuit Breaker Implementation ==============
+   266→   266→
+   267→   267→/**
+   268→   268→ * Enterprise Circuit Breaker Implementation
+   269→   269→ *
+   270→   270→ * Implements the circuit breaker pattern with three states:
+   271→   271→ * - CLOSED: Normal operation, requests pass through and statistics are recorded
+   272→   272→ * - OPEN: Circuit is tripped, requests fail fast without calling the service
+   273→   273→ * - HALF_OPEN: Testing state, limited requests are allowed through to test recovery
+   274→   274→ *
+   275→   275→ * Features:
+   276→   276→ * - Sliding window for failure rate calculation
+   277→   277→ * - Configurable thresholds
+   278→   278→ * - State change callbacks
+   279→   279→ * - Persistence support
+   280→   280→ * - Health check integration
+   281→   281→ */
+   282→   282→export class CircuitBreaker {
+   283→   283→  private config: Required<CircuitBreakerConfig> & { name: string };
+   284→   284→  private state: CircuitState = 'CLOSED';
+   285→   285→  private previousState: CircuitState = 'CLOSED';
+   286→   286→  private failureCount: number = 0;
+   287→   287→  private successCount: number = 0;
+   288→   288→  private openedAt: Date | null = null;
+   289→   289→  private stats: CircuitBreakerStats;
+   290→   290→  private slidingWindowBuckets: SlidingWindowBucket[] = [];
+   291→   291→  private healthCheckCallback: HealthCheckCallback | null = null;
+   292→   292→
+   293→   293→  // Counters for statistics
+   294→   294→  private totalSuccessfulCalls: number = 0;
+   295→   295→  private totalFailedCalls: number = 0;
+   296→   296→  private totalRejectedCalls: number = 0;
+   297→   297→  private totalSlowCalls: number = 0;
+   298→   298→
+   299→   299→  static readonly DEFAULT_CONFIG: Omit<Required<CircuitBreakerConfig>, 'name'> = {
+   300→   300→    failureThreshold: 5,
+   301→   301→    resetTimeout: 30000,
+   302→   302→    halfOpenSuccessThreshold: 3,
+   303→   303→    failureRateThreshold: 50,
+   304→   304→    volumeThreshold: 10,
+   305→   305→    slidingWindowSize: 60000,
+   306→   306→    slidingWindowBuckets: 10,
+   307→   307→    slowCallDurationEnabled: true,
+   308→   308→    slowCallDurationThreshold: 5000,
+   309→   309→    enablePersistence: false,
+   310→   310→    onStateChange: undefined,
+   311→   311→  };
+   312→   312→
+   313→   313→  constructor(config: CircuitBreakerConfig) {
+   314→   314→    this.config = {
+   315→   315→      ...CircuitBreaker.DEFAULT_CONFIG,
+   316→   316→      ...config,
+   317→   317→    };
+   318→   318→
+   319→   319→    this.stats = this.initializeStats();
+   320→   320→
+   321→   321→    // Initialize sliding window buckets
+   322→   322→    this.initializeSlidingWindow();
+   323→   323→
+   324→   324→    logger.info('Circuit breaker initialized', {
+   325→   325→      event: 'circuit-breaker.init',
+   326→   326→      metadata: {
+   327→   327→        name: this.config.name,
+   328→   328→        failureThreshold: this.config.failureThreshold,
+   329→   329→        resetTimeout: this.config.resetTimeout,
+   330→   330→      },
+   331→   331→    });
+   332→   332→  }
+   333→   333→
+   334→   334→  /**
+   335→   335→   * Execute a function through the circuit breaker
+   336→   336→   *
+   337→   337→   * @param fn - The function to execute
+   338→   338→   * @returns Result of the function or throws if circuit is open
+   339→   339→   * @throws {AppError} If circuit is open or execution fails
+   340→   340→   */
+   341→   341→  async execute<T>(fn: () => T | Promise<T>): Promise<T> {
+   342→   342→    const startTime = Date.now();
+   343→   343→
+   344→   344→    // Check if we can execute
+   345→   345→    if (!this.canExecute()) {
+   346→   346→      this.totalRejectedCalls++;
+   347→   347→      const error = new AppError(
+   348→   348→        `Circuit breaker '${this.config.name}' is open - rejecting request`,
+   349→   349→        ErrorCode.API_REQUEST_FAILED,
+   350→   350→        { severity: 'warning', context: { state: this.state, name: this.config.name } }
+   351→   351→      );
+   352→   352→      
+   353→   353→      logger.warn('Circuit breaker rejected request', {
+   354→   354→        event: 'circuit-breaker.rejected',
+   355→   355→        metadata: { name: this.config.name, state: this.state },
+   356→   356→        error,
+   357→   357→      });
+   358→   358→      
+   359→   359→      throw error;
+   360→   360→    }
+   361→   361→
+   362→   362→    try {
+   363→   363→      const result = await fn();
+   364→   364→      const duration = Date.now() - startTime;
+   365→   365→      
+   366→   366→      this.recordSuccess(duration);
+   367→   367→      return result;
+   368→   368→    } catch (error) {
+   369→   369→      const wrappedError = wrapError(error);
+   370→   370→      this.recordFailure();
+   371→   371→      
+   372→   372→      logger.warn('Circuit breaker recorded failure', {
+   373→   373→        event: 'circuit-breaker.failure',
+   374→   374→        metadata: {
+   375→   375→          name: this.config.name,
+   376→   376→          state: this.state,
+   377→   377→          failureCount: this.failureCount,
+   378→   378→        },
+   379→   379→        error: wrappedError,
+   380→   380→      });
+   381→   381→      
+   382→   382→      throw wrappedError;
+   383→   383→    }
+   384→   384→  }
+   385→   385→
+   386→   386→  /**
+   387→   387→   * Check if execution is allowed based on current state
+   388→   388→   */
+   389→   389→  canExecute(): boolean {
+   390→   390→    switch (this.state) {
+   391→   391→      case 'CLOSED':
+   392→   392→        return true;
+   393→   393→
+   394→   394→      case 'OPEN':
+   395→   395→        // Check if reset timeout has elapsed
+   396→   396→        if (this.openedAt && Date.now() >= this.openedAt.getTime() + this.config.resetTimeout) {
+   397→   397→          this.transitionTo('HALF_OPEN');
+   398→   398→          return true;
+   399→   399→        }
+   400→   400→        return false;
+   401→   401→
+   402→   402→      case 'HALF_OPEN':
+   403→   403→        // In half-open, allow limited traffic through
+   404→   404→        return true;
+   405→   405→
+   406→   406→      default:
+   407→   407→        return true;
+   408→   408→    }
+   409→   409→  }
+   410→   410→
+   411→   411→  /**
+   412→   412→   * Get current circuit breaker state
+   413→   413→   */
+   414→   414→  getState(): CircuitState {
+   415→   415→    // Auto-check for state transitions
+   416→   416→    if (this.state === 'OPEN' && this.openedAt) {
+   417→   417→      const elapsed = Date.now() - this.openedAt.getTime();
+   418→   418→      if (elapsed >= this.config.resetTimeout) {
+   419→   419→        this.transitionTo('HALF_OPEN');
+   420→   420→      }
+   421→   421→    }
+   422→   422→    return this.state;
+   423→   423→  }
+   424→   424→
+   425→   425→  /**
+   426→   426→   * Get comprehensive statistics
+   427→   427→   */
+   428→   428→  getStats(): CircuitBreakerStats {
+   429→   429→    this.updateStatsFromWindow();
+   430→   430→    return { ...this.stats };
+   431→   431→  }
+   432→   432→
+   433→   433→  /**
+   434→   434→   * Manually trip the circuit (open it)
+   435→   435→   */
+   436→   436→  trip(): void {
+   437→   437→    if (this.state !== 'OPEN') {
+   438→   438→      this.transitionTo('OPEN');
+   439→   439→      logger.warn('Circuit breaker manually tripped', {
+   440→   440→        event: 'circuit-breaker.trip',
+   441→   441→        metadata: { name: this.config.name, previousState: this.previousState },
+   442→   442→      });
+   443→   443→    }
+   444→   444→  }
+   445→   445→
+   446→   446→  /**
+   447→   447→   * Manually reset the circuit (close it)
+   448→   448→   */
+   449→   449→  reset(): void {
+   450→   450→    if (this.state !== 'CLOSED') {
+   451→   451→      this.transitionTo('CLOSED');
+   452→   452→      logger.info('Circuit breaker manually reset', {
+   453→   453→        event: 'circuit-breaker.reset',
+   454→   454→        metadata: { name: this.config.name, previousState: this.previousState },
+   455→   455→      });
+   456→   456→    }
+   457→   457→  }
+   458→   458→
+   459→   459→  /**
+   460→   460→   * Set health check callback for proactive monitoring
+   461→   461→   */
+   462→   462→  setHealthCheck(callback: HealthCheckCallback): void {
+   463→   463→    this.healthCheckCallback = callback;
+   464→   464→    logger.debug('Health check callback set', {
+   465→   465→      event: 'circuit-breaker.health-check.set',
+   466→   466→      metadata: { name: this.config.name },
+   467→   467→    });
+   468→   468→  }
+   469→   469→
+   470→   470→  /**
+   471→   471→   * Perform health check and update state accordingly
+   472→   472→   */
+   473→   473→  async performHealthCheck(): Promise<HealthCheckResult | null> {
+   474→   474→    if (!this.healthCheckCallback) {
+   475→   475→      return null;
+   476→   476→    }
+   477→   477→
+   478→   478→    const startTime = Date.now();
+   479→   479→    
+   480→   480→    try {
+   481→   481→      const result = await this.healthCheckCallback();
+   482→   482→      result.latencyMs = Date.now() - startTime;
+   483→   483→
+   484→   484→      if (!result.healthy && this.state === 'HALF_OPEN') {
+   485→   485→        this.transitionTo('OPEN');
+   486→   486→      } else if (result.healthy && this.state === 'OPEN') {
+   487→   487→        this.transitionTo('HALF_OPEN');
+   488→   488→      }
+   489→   489→
+   490→   490→      logger.debug('Health check completed', {
+   491→   491→        event: 'circuit-breaker.health-check',
+   492→   492→        metadata: {
+   493→   493→          name: this.config.name,
+   494→   494→          healthy: result.healthy,
+   495→   495→          latencyMs: result.latencyMs,
+   496→   496→        },
+   497→   497→      });
+   498→   498→
+   499→   499→      return result;
+   500→   500→    } catch (error) {
+   501→   501→      logger.error('Health check failed', {
+   502→   502→        event: 'circuit-breaker.health-check.error',
+   503→   503→        metadata: { name: this.config.name },
+   504→   504→        error: error as Error,
+   505→   505→      });
+   506→   506→
+   507→   507→      if (this.state === 'HALF_OPEN') {
+   508→   508→        this.transitionTo('OPEN');
+   509→   509→      }
+   510→   510→
+   511→   511→      return {
+   512→   512→        healthy: false,
+   513→   513→        details: { error: (error as Error).message },
+   514→   514→        checkedAt: new Date(),
+   515→   515→        latencyMs: Date.now() - startTime,
+   516→   516→      };
+   517→   517→    }
+   518→   518→  }
+   519→   519→
+   520→   520→  /**
+   521→   521→   * Persist current state for recovery after restart
+   522→   522→   */
+   523→   523→  async persistState(storage?: { get: (key: string) => Promise<string | null>; set: (key: string, value: string) => Promise<void> }): Promise<PersistedCircuitState> {
+   524→   524→    if (!this.config.enablePersistence || !storage) {
+   525→   525→      // Return state without storage
+   526→   526→      const state = this.createPersistedState();
+   527→   527→      logger.debug('Circuit breaker state prepared for persistence', {
+   528→   528→        event: 'circuit-breaker.persist',
+   529→   529→        metadata: { name: this.config.name, state: state.state },
+   530→   530→      });
+   531→   531→      return state;
+   532→   532→    }
+   533→   533→
+   534→   534→    const state = this.createPersistedState();
+   535→   535→    const key = `circuit-breaker:${this.config.name}`;
+   536→   536→    
+   537→   537→    try {
+   538→   538→      await storage.set(key, JSON.stringify(state));
+   539→   539→      logger.info('Circuit breaker state persisted', {
+   540→   540→        event: 'circuit-breaker.persisted',
+   541→   541→        metadata: { name: this.config.name, state: state.state },
+   542→   542→      });
+   543→   543→    } catch (error) {
+   544→   544→      logger.error('Failed to persist circuit breaker state', {
+   545→   545→        event: 'circuit-breaker.persist.error',
+   546→   546→        metadata: { name: this.config.name },
+   547→   547→        error: error as Error,
+   548→   548→      });
+   549→   549→    }
+   550→   550→
+   551→   551→    return state;
+   552→   552→  }
+   553→   553→
+   554→   554→  /**
+   555→   555→   * Recover persisted state after restart
+   556→   556→   */
+   557→   557→  async recoverState(storage?: { get: (key: string) => Promise<string | null> }): Promise<boolean> {
+   558→   558→    if (!storage) {
+   559→   559→      return false;
+   560→   560→    }
+   561→   561→
+   562→   562→    const key = `circuit-breaker:${this.config.name}`;
+   563→   563→
+   564→   564→    try {
+   565→   565→      const data = await storage.get(key);
+   566→   566→      if (!data) {
+   567→   567→        return false;
+   568→   568→      }
+   569→   569→
+   570→   570→      const persisted: PersistedCircuitState = JSON.parse(data);
+   571→   571→
+   572→   572→      // Validate version compatibility
+   573→   573→      if (persisted.version > 1) {
+   574→   574→        logger.warn('Unknown persisted state version', {
+   575→   575→          event: 'circuit-breaker.recover.version-warning',
+   576→   576→          metadata: { name: this.config.name, version: persisted.version },
+   577→   577→        });
+   578→   578→        return false;
+   579→   579→      }
+   580→   580→
+   581→   581→      // Check if state is still relevant (not too old)
+   582→   582→      const updatedAt = new Date(persisted.updatedAt);
+   583→   583→      const age = Date.now() - updatedAt.getTime();
+   584→   584→
+   585→   585→      // Don't recover if state is older than reset timeout
+   586→   586→      if (age > this.config.resetTimeout * 2) {
+   587→   587→        logger.info('Persisted state too old, starting fresh', {
+   588→   588→          event: 'circuit-breaker.recover.expired',
+   589→   589→          metadata: { name: this.config.name, ageMs: age },
+   590→   590→        });
+   591→   591→        return false;
+   592→   592→      }
+   593→   593→
+   594→   594→      // Restore state
+   595→   595→      this.state = persisted.state;
+   596→   596→      this.failureCount = persisted.failureCount;
+   597→   597→      
+   598→   598→      if (persisted.openedAt) {
+   599→   599→        this.openedAt = new Date(persisted.openedAt);
+   600→   600→        // Adjust openedAt to account for downtime
+   601→   601→        const adjustedOpenTime = Date.now() - (updatedAt.getTime() - this.openedAt.getTime());
+   602→   602→        this.openedAt = new Date(adjustedOpenTime);
+   603→   603→      }
+   604→   604→
+   605→   605→      logger.info('Circuit breaker state recovered', {
+   606→   606→        event: 'circuit-breaker.recovered',
+   607→   607→        metadata: {
+   608→   608→          name: this.config.name,
+   609→   609→          state: this.state,
+   610→   610→          failureCount: this.failureCount,
+   611→   611→          ageMs: age,
+   612→   612→        },
+   613→   613→      });
+   614→   614→
+   615→   615→      return true;
+   616→   616→    } catch (error) {
+   617→   617→      logger.error('Failed to recover circuit breaker state', {
+   618→   618→        event: 'circuit-breaker.recover.error',
+   619→   619→        metadata: { name: this.config.name },
+   620→   620→        error: error as Error,
+   621→   621→      });
+   622→   622→      return false;
+   623→   623→    }
+   624→   624→  }
+   625→   625→
+   626→   626→  /**
+   627→   627→   * Destroy the circuit breaker instance
+   628→   628→   */
+   629→   629→  destroy(): void {
+   630→   630→    this.slidingWindowBuckets = [];
+   631→   631→    this.healthCheckCallback = null;
+   632→   632→    
+   633→   633→    logger.info('Circuit breaker destroyed', {
+   634→   634→      event: 'circuit-breaker.destroy',
+   635→   635→      metadata: { name: this.config.name },
+   636→   636→    });
+   637→   637→  }
+   638→   638→
+   639→   639→  // ============== Private Methods ==============
+   640→   640→
+   641→   641→  private initializeStats(): CircuitBreakerStats {
+   642→   642→    return {
+   643→   643→      state: this.state,
+   644→   644→      successfulCalls: 0,
+   645→   645→      failedCalls: 0,
+   646→   646→      rejectedCalls: 0,
+   647→   647→      failureRate: 0,
+   648→   648→      slowCalls: 0,
+   649→   649→    };
+   650→   650→  }
+   651→   651→
+   652→   652→  private initializeSlidingWindow(): void {
+   653→   653→    const now = Date.now();
+   654→   654→    const bucketSize = this.config.slidingWindowSize / this.config.slidingWindowBuckets;
+   655→   655→    
+   656→   656→    this.slidingWindowBuckets = [];
+   657→   657→    for (let i = 0; i < this.config.slidingWindowBuckets; i++) {
+   658→   658→      this.slidingWindowBuckets.push({
+   659→   659→        startTime: now - (this.config.slidingWindowBuckets - 1 - i) * bucketSize,
+   660→   660→        successful: 0,
+   661→   661→        failed: 0,
+   662→   662→        slow: 0,
+   663→   663→        total: 0,
+   664→   664→      });
+   665→   665→    }
+   666→   666→  }
+   667→   667→
+   668→   668→  private getCurrentBucket(): SlidingWindowBucket {
+   669→   669→    const now = Date.now();
+   670→   670→    const bucketSize = this.config.slidingWindowSize / this.config.slidingWindowBuckets;
+   671→   671→    const bucketIndex = Math.floor(now / bucketSize) % this.config.slidingWindowBuckets;
+   672→   672→    
+   673→   673→    let bucket = this.slidingWindowBuckets[bucketIndex];
+   674→   674→    
+   675→   675→    // Check if bucket is stale
+   676→   676→    if (now - bucket.startTime >= this.config.slidingWindowSize) {
+   677→   677→      // Reset all buckets - window has completely passed
+   678→   678→      this.initializeSlidingWindow();
+   679→   679→      bucket = this.slidingWindowBuckets[this.config.slidingWindowBuckets - 1];
+   680→   680→    } else if (bucket.startTime + bucketSize < now) {
+   681→   681→      // Reset this specific bucket
+   682→   682→      bucket = {
+   683→   683→        startTime: now,
+   684→   684→        successful: 0,
+   685→   685→        failed: 0,
+   686→   686→        slow: 0,
+   687→   687→        total: 0,
+   688→   688→      };
+   689→   689→      this.slidingWindowBuckets[bucketIndex] = bucket;
+   690→   690→    }
+   691→   691→
+   692→   692→    return bucket;
+   693→   693→  }
+   694→   694→
+   695→   695→  private recordSuccess(durationMs: number): void {
+   696→   696→    const bucket = this.getCurrentBucket();
+   697→   697→    bucket.successful++;
+   698→   698→    bucket.total++;
+   699→   699→    this.totalSuccessfulCalls++;
+   700→   700→
+   701→   701→    // Track slow calls
+   702→   702→    if (this.config.slowCallDurationEnabled && durationMs > this.config.slowCallDurationThreshold) {
+   703→   703→      bucket.slow++;
+   704→   704→      this.totalSlowCalls++;
+   705→   705→    }
+   706→   706→
+   707→   707→    if (this.state === 'HALF_OPEN') {
+   708→   708→      this.successCount++;
+   709→   709→      if (this.successCount >= this.config.halfOpenSuccessThreshold) {
+   710→   710→        this.transitionTo('CLOSED');
+   711→   711→      }
+   712→   712→    } else if (this.state === 'CLOSED') {
+   713→   713→      // Reset failure count on success in closed state
+   714→   714→      this.failureCount = Math.max(0, this.failureCount - 1);
+   715→   715→    }
+   716→   716→  }
+   717→   717→
+   718→   718→  private recordFailure(): void {
+   719→   719→    const bucket = this.getCurrentBucket();
+   720→   720→    bucket.failed++;
+   721→   721→    bucket.total++;
+   722→   722→    this.totalFailedCalls++;
+   723→   723→    this.failureCount++;
+   724→   724→
+   725→   725→    if (this.state === 'HALF_OPEN') {
+   726→   726→      // Any failure in half-open immediately opens the circuit
+   727→   727→      this.transitionTo('OPEN');
+   728→   728→    } else if (this.state === 'CLOSED') {
+   729→   729→      // Check if we should open the circuit
+   730→   730→      if (this.shouldOpenCircuit()) {
+   731→   731→        this.transitionTo('OPEN');
+   732→   732→      }
+   733→   733→    }
+   734→   734→  }
+   735→   735→
+   736→   736→  private shouldOpenCircuit(): boolean {
+   737→   737→    // Check failure count threshold
+   738→   738→    if (this.failureCount >= this.config.failureThreshold) {
+   739→   739→      return true;
+   740→   740→    }
+   741→   741→
+   742→   742→    // Check failure rate threshold
+   743→   743→    this.updateStatsFromWindow();
+   744→   744→    if (this.stats.failureRate >= this.config.failureRateThreshold) {
+   745→   745→      const totalCalls = this.stats.successfulCalls + this.stats.failedCalls;
+   746→   746→      if (totalCalls >= this.config.volumeThreshold) {
+   747→   747→        return true;
+   748→   748→      }
+   749→   749→    }
+   750→   750→
+   751→   751→    return false;
+   752→   752→  }
+   753→   753→
+   754→   754→  private transitionTo(newState: CircuitState): void {
+   755→   755→    this.previousState = this.state;
+   756→   756→    this.state = newState;
+   757→   757→
+   758→   758→    switch (newState) {
+   759→   759→      case 'OPEN':
+   760→   760→        this.openedAt = new Date();
+   761→   761→        this.successCount = 0;
+   762→   762→        break;
+   763→   763→      case 'HALF_OPEN':
+   764→   764→        this.successCount = 0;
+   765→   765→        break;
+   766→   766→      case 'CLOSED':
+   767→   767→        this.openedAt = null;
+   768→   768→        this.failureCount = 0;
+   769→   769→        this.successCount = 0;
+   770→   770→        break;
+   771→   771→    }
+   772→   772→
+   773→   773→    // Update stats
+   774→   774→    this.stats.state = newState;
+   775→   775→    this.stats.openedAt = this.openedAt ?? undefined;
+   776→   776→    this.stats.nextRetryAt = this.openedAt 
+   777→   777→      ? new Date(this.openedAt.getTime() + this.config.resetTimeout)
+   778→   778→      : undefined;
+   779→   779→
+   780→   780→    // Call state change callback
+   781→   781→    if (this.config.onStateChange) {
+   782→   782→      try {
+   783→   783→        this.config.onStateChange(newState, this.previousState);
+   784→   784→      } catch (error) {
+   785→   785→        logger.error('State change callback error', {
+   786→   786→          event: 'circuit-breaker.callback.error',
+   787→   787→          metadata: { name: this.config.name },
+   788→   788→          error: error as Error,
+   789→   789→        });
+   790→   790→      }
+   791→   791→    }
+   792→   792→
+   793→   793→    logger.info('Circuit breaker state changed', {
+   794→   794→      event: 'circuit-breaker.state-change',
+   795→   795→      metadata: {
+   796→   796→        name: this.config.name,
+   797→   797→        previousState: this.previousState,
+   798→   798→        newState,
+   799→   799→        openedAt: this.openedAt?.toISOString(),
+   800→   800→      },
+   801→   801→    });
+   802→   802→  }
+   803→   803→
+   804→   804→  private updateStatsFromWindow(): void {
+   805→   805→    let successful = 0;
+   806→   806→    let failed = 0;
+   807→   807→    let slow = 0;
+   808→   808→
+   809→   809→    for (const bucket of this.slidingWindowBuckets) {
+   810→   810→      successful += bucket.successful;
+   811→   811→      failed += bucket.failed;
+   812→   812→      slow += bucket.slow;
+   813→   813→    }
+   814→   814→
+   815→   815→    const total = successful + failed;
+   816→   816→    this.stats.successfulCalls = successful;
+   817→   817→    this.stats.failedCalls = failed;
+   818→   818→    this.stats.slowCalls = slow;
+   819→   819→    this.stats.rejectedCalls = this.totalRejectedCalls;
+   820→   820→    this.stats.failureRate = total > 0 ? (failed / total) * 100 : 0;
+   821→   821→    this.stats.state = this.getState();
+   822→   822→    this.stats.openedAt = this.openedAt ?? undefined;
+   823→   823→    this.stats.nextRetryAt = this.openedAt 
+   824→   824→      ? new Date(this.openedAt.getTime() + this.config.resetTimeout)
+   825→   825→      : undefined;
+   826→   826→  }
+   827→   827→
+   828→   828→  private createPersistedState(): PersistedCircuitState {
+   829→   829→    return {
+   830→   830→      name: this.config.name,
+   831→   831→      state: this.state,
+   832→   832→      updatedAt: new Date().toISOString(),
+   833→   833→      failureCount: this.failureCount,
+   834→   834→      openedAt: this.openedAt?.toISOString(),
+   835→   835→      version: 1,
+   836→   836→    };
+   837→   837→  }
+   838→   838→}
+   839→   839→
+   840→   840→// ============== Retry Implementation ==============
+   841→   841→
+   842→   842→/**
+   843→   843→ * Retry Handler with Exponential Backoff
+   844→   844→ *
+   845→   845→ * Provides configurable retry logic with:
+   846→   846→ * - Exponential backoff with jitter
+   847→   847→ * - Configurable retry conditions
+   848→   848→ * - Attempt callbacks
+   849→   849→ * - Max retry limits
+   850→   850→ */
+   851→   851→export class RetryHandler {
+   852→   852→  private config: Required<RetryConfig>;
+   853→   853→
+   854→   854→  static readonly DEFAULT_CONFIG: Required<RetryConfig> = {
+   855→   855→    maxAttempts: 3,
+   856→   856→    initialDelayMs: 1000,
+   857→   857→    maxDelayMs: 30000,
+   858→   858→    multiplier: 2.0,
+   859→   859→    jitterFactor: 0.1,
+   860→   860→    retryableErrors: [],
+   861→   861→    retryableStatusCodes: [],
+   862→   862→    onRetry: undefined,
+   863→   863→  };
+   864→   864→
+   865→   865→  constructor(config: Partial<RetryConfig> = {}) {
+   866→   866→    this.config = { ...RetryHandler.DEFAULT_CONFIG, ...config };
+   867→   867→  }
+   868→   868→
+   869→   869→  /**
+   870→   870→   * Execute a function with retry logic
+   871→   871→   *
+   872→   872→   * @param fn - The function to execute
+   873→   873→   * @returns Result of the function
+   874→   874→   * @throws {AppError} After all retries exhausted
+   875→   875→   */
+   876→   876→  async execute<T>(fn: () => T | Promise<T>): Promise<T> {
+   877→   877→    let lastError: Error | undefined;
+   878→   878→    
+   879→   879→    for (let attempt = 1; attempt <= this.config.maxAttempts; attempt++) {
+   880→   880→      try {
+   881→   881→        const result = await fn();
+   882→   882→        
+   883→   883→        if (attempt > 1) {
+   884→   884→          logger.info('Retry succeeded', {
+   885→   885→            event: 'retry.success',
+   886→   886→            metadata: { attempt, maxAttempts: this.config.maxAttempts },
+   887→   887→          });
+   888→   888→        }
+   889→   889→        
+   890→   890→        return result;
+   891→   891→      } catch (error) {
+   892→   892→        lastError = wrapError(error);
+   893→   893→
+   894→   894→        // Check if we should retry
+   895→   895→        if (attempt < this.config.maxAttempts && this.shouldRetry(lastError)) {
+   896→   896→          const delay = this.calculateDelay(attempt);
+   897→   897→          
+   898→   898→          logger.warn('Retrying after error', {
+   899→   899→            event: 'retry.attempt',
+   900→   900→            metadata: {
+   901→   901→              attempt,
+   902→   902→              maxAttempts: this.config.maxAttempts,
+   903→   903→              delayMs: delay,
+   904→   904→              error: lastError.message,
+   905→   905→            },
+   906→   906→            error: lastError,
+   907→   907→          });
+   908→   908→
+   909→   909→          // Call retry callback
+   910→   910→          if (this.config.onRetry) {
+   911→   911→            try {
+   912→   912→              this.config.onRetry(lastError, attempt);
+   913→   913→            } catch (callbackError) {
+   914→   914→              logger.error('Retry callback error', {
+   915→   915→                event: 'retry.callback.error',
+   916→   916→                error: callbackError as Error,
+   917→   917→              });
+   918→   918→            }
+   919→   919→          }
+   920→   920→
+   921→   921→          // Wait before retrying
+   922→   922→          await this.sleep(delay);
+   923→   923→        } else {
+   924→   924→          // No more retries or not retryable
+   925→   925→          break;
+   926→   926→        }
+   927→   927→      }
+   928→   928→    }
+   929→   929→
+   930→   930→    logger.error('All retry attempts exhausted', {
+   931→   931→      event: 'retry.exhausted',
+   932→   932→      metadata: {
+   933→   933→        maxAttempts: this.config.maxAttempts,
+   934→   934→        error: lastError?.message,
+   935→   935→      },
+   936→   936→      error: lastError,
+   937→   937→    });
+   938→   938→
+   939→   939→    throw lastError ?? new AppError('Retry failed with unknown error');
+   940→   940→  }
+   941→   941→
+   942→   942→  /**
+   943→   943→   * Calculate delay with exponential backoff and jitter
+   944→   944→   */
+   945→   945→  calculateDelay(attempt: number): number {
+   946→   946→    const exponentialDelay = this.config.initialDelayMs * Math.pow(this.config.multiplier, attempt - 1);
+   947→   947→    const cappedDelay = Math.min(exponentialDelay, this.config.maxDelayMs);
+   948→   948→    
+   949→   949→    // Apply jitter (random variation)
+   950→   950→    const jitter = cappedDelay * this.config.jitterFactor * (Math.random() * 2 - 1);
+   951→   951→    
+   952→   952→    return Math.max(0, Math.floor(cappedDelay + jitter));
+   953→   953→  }
+   954→   954→
+   955→   955→  /**
+   956→   956→   * Check if an error is retryable
+   957→   957→   */
+   958→   958→  private shouldRetry(error: Error): boolean {
+   959→   959→    // Check specific error codes
+   960→   960→    if (this.config.retryableErrors.length > 0 && error instanceof AppError) {
+   961→   961→      if (this.config.retryableErrors.includes(error.code)) {
+   962→   962→        return true;
+   963→   963→      }
+   964→   964→      // If specific codes defined but error doesn't match, don't retry
+   965→   965→      if (error.code) {
+   966→   966→        return false;
+   967→   967→      }
+   968→   968→    }
+   969→   969→
+   970→   970→    // Check HTTP status codes
+   971→   971→    if (this.config.retryableStatusCodes.length > 0 && error instanceof AppError) {
+   972→   972→      const statusCode = error.context?.statusCode as number;
+   973→   973→      if (statusCode && this.config.retryableStatusCodes.includes(statusCode)) {
+   974→   974→        return true;
+   975→   975→      }
+   976→   976→    }
+   977→   977→
+   978→   978→    // Default: retry on network-like errors
+   979→   979→    const nonRetryableMessages = [
+   980→   980→      'invalid',
+   981→   981→      'unauthorized',
+   982→   982→      'forbidden',
+   983→   983→      'not found',
+   984→   984→      'conflict',
+   985→   985→    ];
+   986→   986→    
+   987→   987→    const lowerMessage = error.message.toLowerCase();
+   988→   988→    const isNonRetryable = nonRetryableMessages.some(msg => lowerMessage.includes(msg));
+   989→   989→    
+   990→   990→    // If no specific filters, retry everything except obvious client errors
+   991→   991→    if (this.config.retryableErrors.length === 0 && this.config.retryableStatusCodes.length === 0) {
+   992→   992→      return !isNonRetryable;
+   993→   993→    }
+   994→   994→
+   995→   995→    return !isNonRetryable;
+   996→   996→  }
+   997→   997→
+   998→   998→  private sleep(ms: number): Promise<void> {
+   999→   999→    return new Promise(resolve => setTimeout(resolve, ms));
+  1000→  1000→  }
+  1001→  1001→}
+  1002→  1002→
+  1003→  1003→// ============== Bulkhead Implementation ==============
+  1004→  1004→
+  1005→  1005→/**
+  1006→  1006→ * Bulkhead Isolation Pattern
+  1007→  1007→ *
+  1008→  1008→ * Limits the number of concurrent calls to prevent cascade failures.
+  1009→  1009→ * Uses a semaphore-based approach with a waiting queue.
+  1010→  1010→ */
+  1011→  1011→export class Bulkhead {
+  1012→  1012→  private config: Required<BulkheadConfig>;
+  1013→  1013→  private runningCount: number = 0;
+  1014→  1014→  private waitingQueue: Array<{ resolve: () => void; reject: (error: Error) => void }> = [];
+  1015→  1015→  
+  1016→  1016→  // Statistics
+  1017→  1017→  private totalAccepted: number = 0;
+  1018→  1018→  private totalRejected: number = 0;
+  1019→  1019→
+  1020→  1020→  static readonly DEFAULT_CONFIG: Required<BulkheadConfig> = {
+  1021→  1021→    name: 'default',
+  1022→  1022→    maxConcurrent: 10,
+  1023→  1023→    maxWaitQueueLength: 50,
+  1024→  1024→    maxWaitTimeMs: 5000,
+  1025→  1025→  };
+  1026→  1026→
+  1027→  1027→  constructor(config: BulkheadConfig) {
+  1028→  1028→    this.config = { ...Bulkhead.DEFAULT_CONFIG, ...config };
+  1029→  1029→
+  1030→  1030→    logger.info('Bulkhead initialized', {
+  1031→  1031→      event: 'bulkhead.init',
+  1032→  1032→      metadata: {
+  1033→  1033→        name: this.config.name,
+  1034→  1034→        maxConcurrent: this.config.maxConcurrent,
+  1035→  1035→        maxWaitQueueLength: this.config.maxWaitQueueLength,
+  1036→  1036→      },
+  1037→  1037→    });
+  1038→  1038→  }
+  1039→  1039→
+  1040→  1040→  /**
+  1041→  1041→   * Execute a function within bulkhead constraints
+  1042→  1042→   *
+  1043→  1043→   * @param fn - The function to execute
+  1044→  1044→   * @returns Result of the function
+  1045→  1045→   * @throws {AppError} If bulkhead is full
+  1046→  1046→   */
+  1047→  1047→  async execute<T>(fn: () => T | Promise<T>): Promise<T> {
+  1048→  1048→    // Try to acquire slot
+  1049→  1049→    if (this.runningCount < this.config.maxConcurrent) {
+  1050→  1050→      this.runningCount++;
+  1051→  1051→      this.totalAccepted++;
+  1052→  1052→      
+  1053→  1053→      try {
+  1054→  1054→        return await fn();
+  1055→  1055→      } finally {
+  1056→  1056→        this.releaseSlot();
+  1057→  1057→      }
+  1058→  1058→    }
+  1059→  1059→
+  1060→  1060→    // Need to wait in queue
+  1061→  1061→    if (this.waitingQueue.length >= this.config.maxWaitQueueLength) {
+  1062→  1062→      this.totalRejected++;
+  1063→  1063→      
+  1064→  1064→      const error = new AppError(
+  1065→  1065→        `Bulkhead '${this.config.name}' queue is full`,
+  1066→  1066→        ErrorCode.API_REQUEST_FAILED,
+  1067→  1067→        { 
+  1068→  1068→          severity: 'warning',
+  1069→  1069→          context: {
+  1070→  1070→            name: this.config.name,
+  1071→  1071→            runningCount: this.runningCount,
+  1072→  1072→            queueLength: this.waitingQueue.length,
+  1073→  1073→          },
+  1074→  1074→        }
+  1075→  1075→      );
+  1076→  1076→
+  1077→  1077→      logger.warn('Bulkhead queue full, request rejected', {
+  1078→  1078→        event: 'bulkhead.rejected',
+  1079→  1079→        metadata: {
+  1080→  1080→          name: this.config.name,
+  1081→  1081→          queueLength: this.waitingQueue.length,
+  1082→  1082→          maxQueueLength: this.config.maxWaitQueueLength,
+  1083→  1083→        },
+  1084→  1084→        error,
+  1085→  1085→      });
+  1086→  1086→
+  1087→  1087→      throw error;
+  1088→  1088→    }
+  1089→  1089→
+  1090→  1090→    // Wait for slot with timeout
+  1091→  1091→    return new Promise<T>((resolve, reject) => {
+  1092→  1092→      const waiter = {
+  1093→  1093→        resolve: () => {
+  1094→  1094→          this.runningCount++;
+  1095→  1095→          this.totalAccepted++;
+  1096→  1096→          
+  1097→  1097→          fn()
+  1098→  1098→            .then(result => {
+  1099→  1099→              this.releaseSlot();
+  1100→  1100→              resolve(result);
+  1101→  1101→            })
+  1102→  1102→            .catch(error => {
+  1103→  1103→              this.releaseSlot();
+  1104→  1104→              reject(wrapError(error));
+  1105→  1105→            });
+  1106→  1106→        },
+  1107→  1107→        reject: (error: Error) => {
+  1108→  1108→          this.totalRejected++;
+  1109→  1109→          reject(error);
+  1110→  1110→        },
+  1111→  1111→      };
+  1112→  1112→
+  1113→  1113→      this.waitingQueue.push(waiter);
+  1114→  1114→
+  1115→  1115→      // Set up timeout for waiting
+  1116→  1116→      const timeoutId = setTimeout(() => {
+  1117→  1117→        // Remove from queue
+  1118→  1118→        const index = this.waitingQueue.indexOf(waiter);
+  1119→  1119→        if (index > -1) {
+  1120→  1120→          this.waitingQueue.splice(index, 1);
+  1121→  1121→        }
+  1122→  1122→
+  1123→  1123→        const timeoutError = new AppError(
+  1124→  1124→          `Bulkhead '${this.config.name}' wait timeout exceeded`,
+  1125→  1125→          ErrorCode.API_TIMEOUT,
+  1126→  1126→          { severity: 'warning', context: { name: this.config.name, timeoutMs: this.config.maxWaitTimeMs } }
+  1127→  1127→        );
+  1128→  1128→
+  1129→  1129→        logger.warn('Bulkhead wait timeout', {
+  1130→  1130→          event: 'bulkhead.timeout',
+  1131→  1131→          metadata: {
+  1132→  1132→            name: this.config.name,
+  1133→  1133→            timeoutMs: this.config.maxWaitTimeMs,
+  1134→  1134→          },
+  1135→  1135→          error: timeoutError,
+  1136→  1136→        });
+  1137→  1137→
+  1138→  1138→        waiter.reject(timeoutError);
+  1139→  1139→      }, this.config.maxWaitTimeMs);
+  1140→  1140→
+  1141→  1141→      // Store timeout ID for cleanup
+  1142→  1142→      (waiter as unknown as { timeoutId: ReturnType<typeof setTimeout> }).timeoutId = timeoutId;
+  1143→  1143→    });
+  1144→  1144→  }
+  1145→  1145→
+  1146→  1146→  /**
+  1147→  1147→   * Get current bulkhead statistics
+  1148→  1148→   */
+  1149→  1149→  getStats(): BulkheadStats {
+  1150→  1150→    return {
+  1151→  1151→      currentRunning: this.runningCount,
+  1152→  1152→      currentWaiting: this.waitingQueue.length,
+  1153→  1153→      totalAccepted: this.totalAccepted,
+  1154→  1154→      totalRejected: this.totalRejected,
+  1155→  1155→    };
+  1156→  1156→  }
+  1157→  1157→
+  1158→  1158→  /**
+  1159→  1159→   * Get available capacity
+  1160→  1160→   */
+  1161→  1161→  getAvailableCapacity(): number {
+  1162→  1162→    return Math.max(0, this.config.maxConcurrent - this.runningCount);
+  1163→  1163→  }
+  1164→  1164→
+  1165→  1165→  /**
+  1166→  1166→   * Destroy the bulkhead instance
+  1167→  1167→   */
+  1168→  1168→  destroy(): void {
+  1169→  1169→    // Reject all waiting requests
+  1170→  1170→    for (const waiter of this.waitingQueue) {
+  1171→  1171→      const timeoutId = (waiter as unknown as { timeoutId?: ReturnType<typeof setTimeout> }).timeoutId;
+  1172→  1172→      if (timeoutId) {
+  1173→  1173→        clearTimeout(timeoutId);
+  1174→  1174→      }
+  1175→  1175→      waiter.reject(new AppError('Bulkhead destroyed'));
+  1176→  1176→    }
+  1177→  1177→    this.waitingQueue = [];
+  1178→  1178→
+  1179→  1179→    logger.info('Bulkhead destroyed', {
+  1180→  1180→      event: 'bulkhead.destroy',
+  1181→  1181→      metadata: { name: this.config.name },
+  1182→  1182→    });
+  1183→  1183→  }
+  1184→  1184→
+  1185→  1185→  private releaseSlot(): void {
+  1186→  1186→    this.runningCount--;
+  1187→  1187→
+  1188→  1188→    // Process waiting queue
+  1189→  1189→    if (this.waitingQueue.length > 0 && this.runningCount < this.config.maxConcurrent) {
+  1190→  1190→      const waiter = this.waitingQueue.shift();
+  1191→  1191→      if (waiter) {
+  1192→  1192→        const timeoutId = (waiter as unknown as { timeoutId?: ReturnType<typeof setTimeout> }).timeoutId;
+  1193→  1193→        if (timeoutId) {
+  1194→  1194→          clearTimeout(timeoutId);
+  1195→  1195→        }
+  1196→  1196→        waiter.resolve();
+  1197→  1197→      }
+  1198→  1198→    }
+  1199→  1199→  }
+  1200→  1200→}
+  1201→  1201→
+  1202→  1202→// ============== Timeout Implementation ==============
+  1203→  1203→
+  1204→  1204→/**
+  1205→  1205→ * Timeout Handler
+  1206→  1206→ *
+  1207→  1207→ * Wraps operations with configurable timeouts.
+  1208→  1208→ */
+  1209→  1209→export class TimeoutHandler {
+  1210→  1210→  private config: Required<TimeoutConfig>;
+  1211→  1211→
+  1212→  1212→  static readonly DEFAULT_CONFIG: Required<TimeoutConfig> = {
+  1213→  1213→    timeoutMs: 10000,
+  1214→  1214→    cancelOnTimeout: true,
+  1215→  1215→    timeoutErrorMessage: 'Operation timed out',
+  1216→  1216→  };
+  1217→  1217→
+  1218→  1218→  constructor(config: Partial<TimeoutConfig> = {}) {
+  1219→  1219→    this.config = { ...TimeoutHandler.DEFAULT_CONFIG, ...config };
+  1220→  1220→  }
+  1221→  1221→
+  1222→  1222→  /**
+  1223→  1223→   * Execute a function with timeout
+  1224→  1224→   *
+  1225→  1225→   * @param fn - The function to execute
+  1226→  1226→   * @returns Result of the function
+  1227→  1227→   * @throws {AppError} If operation times out
+  1228→  1228→   */
+  1229→  1229→  async execute<T>(fn: () => T | Promise<T>): Promise<T> {
+  1230→  1230→    return new Promise<T>((resolve, reject) => {
+  1231→  1231→      // Set up timeout
+  1232→  1232→      const timeoutId = setTimeout(() => {
+  1233→  1233→        const error = new AppError(
+  1234→  1234→          this.config.timeoutErrorMessage,
+  1235→  1235→          ErrorCode.API_TIMEOUT,
+  1236→  1236→          { 
+  1237→  1237→            severity: 'warning',
+  1238→  1238→            context: { timeoutMs: this.config.timeoutMs },
+  1239→  1239→          }
+  1240→  1240→        );
+  1241→  1241→
+  1242→  1242→        logger.warn('Operation timed out', {
+  1243→  1243→          event: 'timeout.exceeded',
+  1244→  1244→          metadata: { timeoutMs: this.config.timeoutMs },
+  1245→  1245→          error,
+  1246→  1246→        });
+  1247→  1247→
+  1248→  1248→        reject(error);
+  1249→  1249→      }, this.config.timeoutMs);
+  1250→  1250→
+  1251→  1251→      // Execute the function
+  1252→  1252→      Promise.resolve()
+  1253→  1253→        .then(() => fn())
+  1254→  1254→        .then(result => {
+  1255→  1255→          clearTimeout(timeoutId);
+  1256→  1256→          resolve(result);
+  1257→  1257→        })
+  1258→  1258→        .catch(error => {
+  1259→  1259→          clearTimeout(timeoutId);
+  1260→  1260→          reject(wrapError(error));
+  1261→  1261→        });
+  1262→  1262→    });
+  1263→  1263→  }
+  1264→  1264→
+  1265→  1265→  /**
+  1266→  1266→   * Create a new timeout handler with merged config
+  1267→  1267→   */
+  1268→  1268→  withConfig(config: Partial<TimeoutConfig>): TimeoutHandler {
+  1269→  1269→    return new TimeoutHandler({ ...this.config, ...config });
+  1270→  1270→  }
+  1271→  1271→}
+  1272→  1272→
+  1273→  1273→// ============== Fallback Implementation ==============
+  1274→  1274→
+  1275→  1275→/**
+  1276→  1276→ * Fallback Provider
+  1277→  1277→ *
+  1278→  1278→ * Provides fallback values when primary operations fail.
+  1279→  1279→ */
+  1280→  1280→export class FallbackProvider<T = unknown> {
+  1281→  1281→  private fallbackFn: FallbackFunction<T> | null;
+  1282→  1282→
+  1283→  1283→  constructor(fallbackFn?: FallbackFunction<T>) {
+  1284→  1284→    this.fallbackFn = fallbackFn ?? null;
+  1285→  1285→  }
+  1286→  1286→
+  1287→  1287→  /**
+  1288→  1288→   * Set the fallback function
+  1289→  1289→   */
+  1290→  1290→  setFallback(fn: FallbackFunction<T>): this {
+  1291→  1291→    this.fallbackFn = fn;
+  1292→  1292→    return this;
+  1293→  1293→  }
+  1294→  1294→
+  1295→  1295→  /**
+  1296→  1296→   * Execute with fallback
+  1297→  1297→   *
+  1298→  1298→   * @param fn - Primary function to execute
+  1299→  1299→   * @param context - Context data for fallback function
+  1300→  1300→   * @returns Result of primary or fallback function
+  1301→  1301→   */
+  1302→  1302→  async execute(fn: () => T | Promise<T>, context: Record<string, unknown> = {}): Promise<T> {
+  1303→  1303→    try {
+  1304→  1304→      return await fn();
+  1305→  1305→    } catch (error) {
+  1306→  1306→      const wrappedError = wrapError(error);
+  1307→  1307→
+  1308→  1308→      if (this.fallbackFn) {
+  1309→  1309→        logger.info('Executing fallback due to error', {
+  1310→  1310→          event: 'fallback.executed',
+  1311→  1311→          metadata: { context, error: wrappedError.message },
+  1312→  1312→          error: wrappedError,
+  1313→  1313→        });
+  1314→  1314→
+  1315→  1315→        try {
+  1316→  1316→          return await this.fallbackFn(wrappedError, context);
+  1317→  1317→        } catch (fallbackError) {
+  1318→  1318→          logger.error('Fallback function failed', {
+  1319→  1319→            event: 'fallback.error',
+  1320→  1320→            error: fallbackError as Error,
+  1321→  1321→          });
+  1322→  1322→          throw wrapError(fallbackError);
+  1323→  1323→        }
+  1324→  1324→      }
+  1325→  1325→
+  1326→  1326→      throw wrappedError;
+  1327→  1327→    }
+  1328→  1328→  }
+  1329→  1329→
+  1330→  1330→  /**
+  1331→  1331→   * Get static fallback value
+  1332→  1332→   */
+  1333→  1333→  static withValue<T>(value: T): FallbackProvider<T> {
+  1334→  1334→    return new FallbackProvider<T>(() => value);
+  1335→  1335→  }
+  1336→  1336→}
+  1337→  1337→
+  1338→  1338→// ============== Rate Limiter Integration ==============
+  1339→  1339→
+  1340→  1340→/**
+  1341→  1341→ * In-Memory Rate Limiter
+  1342→  1342→ *
+  1343→  1343→ * Simple token bucket / sliding window rate limiter.
+  1344→  1344→ */
+  1345→  1345→export class RateLimiter {
+  1346→  1346→  private config: Required<RateLimiterConfig>;
+  1347→  1347→  private requests: number[] = []; // Timestamps of requests
+  1348→  1348→
+  1349→  1349→  static readonly DEFAULT_CONFIG: Required<RateLimiterConfig> = {
+  1350→  1350→    limit: 100,
+  1351→  1351→    windowMs: 60000,
+  1352→  1352→    key: 'default',
+  1353→  1353→  };
+  1354→  1354→
+  1355→  1355→  constructor(config: Partial<RateLimiterConfig> = {}) {
+  1356→  1356→    this.config = { ...RateLimiter.DEFAULT_CONFIG, ...config };
+  1357→  1357→  }
+  1358→  1358→
+  1359→  1359→  /**
+  1360→  1360→   * Check if request is allowed
+  1361→  1361→   *
+  1362→  1362→   * @returns Whether request is allowed and remaining count info
+  1363→  1363→   */
+  1364→  1364→  tryAcquire(): { allowed: boolean; remaining: number; resetAt: Date } {
+  1365→  1365→    const now = Date.now();
+  1366→  1366→    const windowStart = now - this.config.windowMs;
+  1367→  1367→
+  1368→  1368→    // Clean old entries
+  1369→  1369→    this.requests = this.requests.filter(time => time > windowStart);
+  1370→  1370→
+  1371→  1371→    if (this.requests.length < this.config.limit) {
+  1372→  1372→      this.requests.push(now);
+  1373→  1373→      return {
+  1374→  1374→        allowed: true,
+  1375→  1375→        remaining: this.config.limit - this.requests.length,
+  1376→  1376→        resetAt: new Date(now + this.config.windowMs),
+  1377→  1377→      };
+  1378→  1378→    }
+  1379→  1379→
+  1380→  1380→    return {
+  1381→  1381→      allowed: false,
+  1382→  1382→      remaining: 0,
+  1383→  1383→      resetAt: new Date(this.requests[0] + this.config.windowMs),
+  1384→  1384→    };
+  1385→  1385→  }
+  1386→  1386→
+  1387→  1387→  /**
+  1388→  1388→   * Execute with rate limiting
+  1389→  1389→   *
+  1390→  1390→   * @param fn - Function to execute if rate limit allows
+  1391→  1391→   * @returns Result or throws if rate limited
+  1392→  1392→   */
+  1393→  1393→  async execute<T>(fn: () => T | Promise<T>): Promise<T> {
+  1394→  1394→    const result = this.tryAcquire();
+  1395→  1395→
+  1396→  1396→    if (!result.allowed) {
+  1397→  1397→      const error = new AppError(
+  1398→  1398→        `Rate limit exceeded for ${this.config.key}`,
+  1399→  1399→        ErrorCode.API_REQUEST_FAILED,
+  1400→  1400→        { 
+  1401→  1401→          severity: 'warning',
+  1402→  1402→          context: {
+  1403→  1403→            key: this.config.key,
+  1404→  1404→            limit: this.config.limit,
+  1405→  1405→            resetAt: result.resetAt.toISOString(),
+  1406→  1406→          },
+  1407→  1407→        }
+  1408→  1408→      );
+  1409→  1409→
+  1410→  1410→      logger.warn('Rate limit exceeded', {
+  1411→  1411→        event: 'rate-limited',
+  1412→  1412→        metadata: {
+  1413→  1413→          key: this.config.key,
+  1414→  1414→          limit: this.config.limit,
+  1415→  1415→          resetAt: result.resetAt.toISOString(),
+  1416→  1416→        },
+  1417→  1417→        error,
+  1418→  1418→      });
+  1419→  1419→
+  1420→  1420→      throw error;
+  1421→  1421→    }
+  1422→  1422→
+  1423→  1423→    return fn();
+  1424→  1424→  }
+  1425→  1425→
+  1426→  1426→  /**
+  1427→  1427→   * Reset the rate limiter
+  1428→  1428→   */
+  1429→  1429→  reset(): void {
+  1430→  1430→    this.requests = [];
+  1431→  1431→  }
+  1432→  1432→
+  1433→  1433→  /**
+  1434→  1434→   * Get current usage stats
+  1435→  1435→   */
+  1436→  1436→  getStats(): { used: number; limit: number; remaining: number } {
+  1437→  1437→    const now = Date.now();
+  1438→  1438→    const windowStart = now - this.config.windowMs;
+  1439→  1439→    const activeRequests = this.requests.filter(time => time > windowStart).length;
+  1440→  1440→    
+  1441→  1441→    return {
+  1442→  1442→      used: activeRequests,
+  1443→  1443→      limit: this.config.limit,
+  1444→  1444→      remaining: Math.max(0, this.config.limit - activeRequests),
+  1445→  1445→    };
+  1446→  1446→  }
+  1447→  1447→}
+  1448→  1448→
+  1449→  1449→// ============== Composite Resilience Manager ==============
+  1450→  1450→
+  1451→  1451→/**
+  1452→  1452→ * Comprehensive Resilience Manager
+  1453→  1453→ *
+  1454→  1454→ * Combines all resilience patterns into a unified interface.
+  1455→  1455→ * Provides easy configuration and execution of resilient operations.
+  1456→  1456→ */
+  1457→  1457→export class ResilienceManager {
+  1458→  1458→  private circuitBreaker: CircuitBreaker | null;
+  1459→  1459→  private retryHandler: RetryHandler;
+  1460→  1460→  private bulkhead: Bulkhead | null;
+  1461→  1461→  private timeoutHandler: TimeoutHandler;
+  1462→  1462→  private fallbackProvider: FallbackProvider<unknown> | null;
+  1463→  1463→  private rateLimiter: RateLimiter | null;
+  1464→  1464→  private healthCheckCallback: HealthCheckCallback | null;
+  1465→  1465→  private readonly name: string;
+  1466→  1466→
+  1467→  1467→  constructor(name: string, config: ResilienceConfig = {}) {
+  1468→  1468→    this.name = name;
+  1469→  1469→
+  1470→  1470→    // Initialize components based on config
+  1471→  1471→    this.circuitBreaker = config.circuitBreaker 
+  1472→  1472→      ? new CircuitBreaker({ name, ...config.circuitBreaker }) 
+  1473→  1473→      : null;
+  1474→  1474→
+  1475→  1475→    this.retryHandler = new RetryHandler(config.retry);
+  1476→  1476→
+  1477→  1477→    this.bulkhead = config.bulkhead 
+  1478→  1478→      ? new Bulkhead({ name, ...config.bulkhead }) 
+  1479→  1479→      : null;
+  1480→  1480→
+  1481→  1481→    this.timeoutHandler = new TimeoutHandler(config.timeout);
+  1482→  1482→
+  1483→  1483→    this.fallbackProvider = config.fallback 
+  1484→  1484→      ? new FallbackProvider(config.fallback) 
+  1485→  1485→      : null;
+  1486→  1486→
+  1487→  1487→    this.rateLimiter = config.rateLimiter 
+  1488→  1488→      ? new RateLimiter({ key: name, ...config.rateLimiter }) 
+  1489→  1489→      : null;
+  1490→  1490→
+  1491→  1491→    this.healthCheckCallback = config.healthCheck ?? null;
+  1492→  1492→
+  1493→  1493→    // Set health check on circuit breaker if provided
+  1494→  1494→    if (this.healthCheckCallback && this.circuitBreaker) {
+  1495→  1495→      this.circuitBreaker.setHealthCheck(this.healthCheckCallback);
+  1496→  1496→    }
+  1497→  1497→
+  1498→  1498→    logger.info('Resilience manager initialized', {
+  1499→  1499→      event: 'resilience.init',
+  1500→  1500→      metadata: {
+  1501→  1501→        name,
+  1502→  1502→        hasCircuitBreaker: !!this.circuitBreaker,
+  1503→  1503→        hasBulkhead: !!this.bulkhead,
+  1504→  1504→        hasFallback: !!this.fallbackProvider,
+  1505→  1505→        hasRateLimiter: !!this.rateLimiter,
+  1506→  1506→      },
+  1507→  1507→    });
+  1508→  1508→  }
+  1509→  1509→
+  1510→  1510→  /**
+  1511→  1511→   * Execute an operation with all configured resilience patterns
+  1512→  1512→   *
+  1513→  1513→   * Patterns are applied in order:
+  1514→  1514→   * 1. Rate Limiter (rejects if over limit)
+  1515→  1515→   * 2. Circuit Breaker (rejects if open)
+  1516→  1516→   * 3. Bulkhead (limits concurrency)
+  1517→  1517→   * 4. Timeout (wraps execution)
+  1518→  1518→   * 5. Retry (retries on failure)
+  1519→  1519→   * 6. Fallback (provides alternative on final failure)
+  1520→  1520→   *
+  1521→  1521→   * @param fn - The function to execute
+  1522→  1522→   * @param context - Additional context for logging/fallback
+  1523→  1523→   * @returns Execution result with metrics
+  1524→  1524→   */
+  1525→  1525→  async execute<T>(
+  1526→  1526→    fn: () => T | Promise<T>,
+  1527→  1527→    context: Record<string, unknown> = {}
+  1528→  1528→  ): Promise<ExecutionResult<T>> {
+  1529→  1529→    const startTime = Date.now();
+  1530→  1530→    let attempts = 0;
+  1531→  1531→    let fallbackInvoked = false;
+  1532→  1532→    let circuitBreakerUsed = !!this.circuitBreaker;
+  1533→  1533→
+  1534→  1534→    const createResult = (
+  1535→  1535→      success: boolean,
+  1536→  1536→      value?: T,
+  1537→  1537→      error?: Error
+  1538→  1538→    ): ExecutionResult<T> => ({
+  1539→  1539→      success,
+  1540→  1540→      value,
+  1541→  1541→      error,
+  1542→  1542→      metrics: {
+  1543→  1543→        durationMs: Date.now() - startTime,
+  1544→  1544→        attempts,
+  1545→  1545→        circuitBreakerUsed,
+  1546→  1546→        fallbackInvoked,
+  1547→  1547→        timestamp: new Date(),
+  1548→  1548→      },
+  1549→  1549→    });
+  1550→  1550→
+  1551→  1551→    // Build the core operation function (rate limiter + circuit breaker + bulkhead + timeout)
+  1552→  1552→    const buildCoreOperation = (): (() => Promise<T>) => {
+  1553→  1553→      return async (): Promise<T> => {
+  1554→  1554→        attempts++;
+  1555→  1555→
+  1556→  1556→        // Apply rate limiting first
+  1557→  1557→        if (this.rateLimiter) {
+  1558→  1558→          await this.rateLimiter.execute(async () => {});
+  1559→  1559→        }
+  1560→  1560→
+  1561→  1561→        // Build the protected execution chain
+  1562→  1562→        const executeWithProtection = async (): Promise<T> => {
+  1563→  1563→          // Apply circuit breaker
+  1564→  1564→          if (this.circuitBreaker) {
+  1565→  1565→            return this.circuitBreaker.execute(async () => {
+  1566→  1566→              // Apply bulkhead
+  1567→  1567→              if (this.bulkhead) {
+  1568→  1568→                return this.bulkhead.execute(async () => {
+  1569→  1569→                  // Apply timeout
+  1570→  1570→                  return this.timeoutHandler.execute(() => fn());
+  1571→  1571→                });
+  1572→  1572→              }
+  1573→  1573→              return this.timeoutHandler.execute(() => fn());
+  1574→  1574→            });
+  1575→  1575→          }
+  1576→  1576→
+  1577→  1577→          // Apply bulkhead without circuit breaker
+  1578→  1578→          if (this.bulkhead) {
+  1579→  1579→            return this.bulkhead.execute(async () => {
+  1580→  1580→              return this.timeoutHandler.execute(() => fn());
+  1581→  1581→            });
+  1582→  1582→          }
+  1583→  1583→
+  1584→  1584→          // Just timeout
+  1585→  1585→          return this.timeoutHandler.execute(() => fn());
+  1586→  1586→        };
+  1587→  1587→
+  1588→  1588→        return executeWithProtection();
+  1589→  1589→      };
+  1590→  1590→    };
+  1591→  1591→
+  1592→  1592→    try {
+  1593→  1593→      // Wrap core operation with retry
+  1594→  1594→      const retriableOperation = (): Promise<T> => {
+  1595→  1595→        return this.retryHandler.execute(buildCoreOperation());
+  1596→  1596→      };
+  1597→  1597→
+  1598→  1598→      // Apply fallback if configured
+  1599→  1599→      if (this.fallbackProvider) {
+  1600→  1600→        try {
+  1601→  1601→          const result = await retriableOperation();
+  1602→  1602→          return createResult(true, result);
+  1603→  1603→        } catch (error) {
+  1604→  1604→          // Use fallback on failure
+  1605→  1605→          fallbackInvoked = true;
+  1606→  1606→          const wrappedError = wrapError(error);
+  1607→  1607→          
+  1608→  1608→          try {
+  1609→  1609→            const fallbackResult = await this.fallbackProvider.execute(
+  1610→  1610→              () => Promise.reject(wrappedError),
+  1611→  1611→              context
+  1612→  1612→            ) as T;
+  1613→  1613→            return createResult(true, fallbackResult);
+  1614→  1614→          } catch (fallbackError) {
+  1615→  1615→            return createResult(false, undefined, wrapError(fallbackError));
+  1616→  1616→          }
+  1617→  1617→        }
+  1618→  1618→      }
+  1619→  1619→
+  1620→  1620→      // No fallback - just execute with retry
+  1621→  1621→      const result = await retriableOperation();
+  1622→  1622→      return createResult(true, result);
+  1623→  1623→    } catch (error) {
+  1624→  1624→      const wrappedError = wrapError(error);
+  1625→  1625→      fallbackInvoked = false;
+  1626→  1626→      
+  1627→  1627→      logger.error('Resilience execution failed', {
+  1628→  1628→        event: 'resilience.execution.failed',
+  1629→  1629→        metadata: {
+  1630→  1630→          name: this.name,
+  1631→  1631→          attempts,
+  1632→  1632→          durationMs: Date.now() - startTime,
+  1633→  1633→          ...context,
+  1634→  1634→        },
+  1635→  1635→        error: wrappedError,
+  1636→  1636→      });
+  1637→  1637→
+  1638→  1638→      return createResult(false, undefined, wrappedError);
+  1639→  1639→    }
+  1640→  1640→  }
+  1641→  1641→
+  1642→  1642→  /**
+  1643→  1643→   * Get combined statistics from all components
+  1644→  1644→   */
+  1645→  1645→  getStats(): Record<string, unknown> {
+  1646→  1646→    const stats: Record<string, unknown> = {
+  1647→  1647→      name: this.name,
+  1648→  1648→    };
+  1649→  1649→
+  1650→  1650→    if (this.circuitBreaker) {
+  1651→  1651→      stats.circuitBreaker = this.circuitBreaker.getStats();
+  1652→  1652→    }
+  1653→  1653→
+  1654→  1654→    if (this.bulkhead) {
+  1655→  1655→      stats.bulkhead = this.bulkhead.getStats();
+  1656→  1656→    }
+  1657→  1657→
+  1658→  1658→    if (this.rateLimiter) {
+  1659→  1659→      stats.rateLimiter = this.rateLimiter.getStats();
+  1660→  1660→    }
+  1661→  1661→
+  1662→  1662→    return stats;
+  1663→  1663→  }
+  1664→  1664→
+  1665→  1665→  /**
+  1666→  1666→   * Get individual components for advanced usage
+  1667→  1667→   */
+  1668→  1668→  getCircuitBreaker(): CircuitBreaker | null {
+  1669→  1669→    return this.circuitBreaker;
+  1670→  1670→  }
+  1671→  1671→
+  1672→  1672→  getBulkhead(): Bulkhead | null {
+  1673→  1673→    return this.bulkhead;
+  1674→  1674→  }
+  1675→  1675→
+  1676→  1676→  getRateLimiter(): RateLimiter | null {
+  1677→  1677→    return this.rateLimiter;
+  1678→  1678→  }
+  1679→  1679→
+  1680→  1680→  /**
+  1681→  1681→   * Set/update health check callback
+  1682→  1682→   */
+  1683→  1683→  setHealthCheck(callback: HealthCheckCallback): void {
+  1684→  1684→    this.healthCheckCallback = callback;
+  1685→  1685→    if (this.circuitBreaker) {
+  1686→  1686→      this.circuitBreaker.setHealthCheck(callback);
+  1687→  1687→    }
+  1688→  1688→  }
+  1689→  1689→
+  1690→  1690→  /**
+  1691→  1691→   * Perform health check
+  1692→  1692→   */
+  1693→  1693→  async performHealthCheck(): Promise<HealthCheckResult | null> {
+  1694→  1694→    if (this.healthCheckCallback && this.circuitBreaker) {
+  1695→  1695→      return this.circuitBreaker.performHealthCheck();
+  1696→  1696→    }
+  1697→  1697→    
+  1698→  1698→    if (this.healthCheckCallback) {
+  1699→  1699→      return this.healthCheckCallback();
+  1700→  1700→    }
+  1701→  1701→
+  1702→  1702→    return null;
+  1703→  1703→  }
+  1704→  1704→
+  1705→  1705→  /**
+  1706→  1706→   * Manually trip the circuit breaker
+  1707→  1707→   */
+  1708→  1708→  trip(): void {
+  1709→  1709→    this.circuitBreaker?.trip();
+  1710→  1710→  }
+  1711→  1711→
+  1712→  1712→  /**
+  1713→  1713→   * Manually reset the circuit breaker
+  1714→  1714→   */
+  1715→  1715→  reset(): void {
+  1716→  1716→    this.circuitBreaker?.reset();
+  1717→  1717→  }
+  1718→  1718→
+  1719→  1719→  /**
+  1720→  1720→   * Destroy all components
+  1721→  1721→   */
+  1722→  1722→  destroy(): void {
+  1723→  1723→    this.circuitBreaker?.destroy();
+  1724→  1724→    this.bulkhead?.destroy();
+  1725→  1725→
+  1726→  1726→    logger.info('Resilience manager destroyed', {
+  1727→  1727→      event: 'resilience.destroy',
+  1728→  1728→      metadata: { name: this.name },
+  1729→  1729→    });
+  1730→  1730→  }
+  1731→  1731→}
+  1732→  1732→
+  1733→  1733→// ============== Factory Functions ==============
+  1734→  1734→
+  1735→  1735→/**
+  1736→  1736→ * Create a pre-configured resilience manager for payment operations
+  1737→  1737→ */
+  1738→  1738→export function createPaymentResilience(transactionRef?: string): ResilienceManager {
+  1739→  1739→  return new ResilienceManager(`payment-${transactionRef ?? 'default'}`, {
+  1740→  1740→    circuitBreaker: {
+  1741→  1741→      name: `payment-cb-${transactionRef ?? 'default'}`,
+  1742→  1742→      failureThreshold: 5,
+  1743→  1743→      resetTimeout: 30000,
+  1744→  1744→      halfOpenSuccessThreshold: 2,
+  1745→  1745→    },
+  1746→  1746→    retry: {
+  1747→  1747→      maxAttempts: 3,
+  1748→  1748→      initialDelayMs: 500,
+  1749→  1749→      maxDelayMs: 5000,
+  1750→  1750→      jitterFactor: 0.2,
+  1751→  1751→    },
+  1752→  1752→    timeout: {
+  1753→  1753→      timeoutMs: 15000,
+  1754→  1754→      timeoutErrorMessage: 'Payment processing timed out',
+  1755→  1755→    },
+  1756→  1756→    fallback: async (error) => {
+  1757→  1757→      logger.warn('Payment fallback executed', {
+  1758→  1758→        event: 'payment.fallback',
+  1759→  1759→        metadata: { transactionRef, originalError: error.message },
+  1760→  1760→      });
+  1761→  1761→      throw error; // Re-throw for proper handling upstream
+  1762→  1762→    },
+  1763→  1763→  });
+  1764→  1764→}
+  1765→  1765→
+  1766→  1766→/**
+  1767→  1767→ * Create a pre-configured resilience manager for external API calls
+  1768→  1768→ */
+  1769→  1769→export function createApiResilience(apiName: string): ResilienceManager {
+  1770→  1770→  return new ResilienceManager(`api-${apiName}`, {
+  1771→  1771→    circuitBreaker: {
+  1772→  1772→      name: `api-cb-${apiName}`,
+  1773→  1773→      failureThreshold: 10,
+  1774→  1774→      resetTimeout: 60000,
+  1775→  1775→      halfOpenSuccessThreshold: 3,
+  1776→  1776→      failureRateThreshold: 40,
+  1777→  1777→    },
+  1778→  1778→    retry: {
+  1779→  1779→      maxAttempts: 4,
+  1780→  1780→      initialDelayMs: 1000,
+  1781→  1781→      maxDelayMs: 10000,
+  1782→  1782→      multiplier: 2.5,
+  1783→  1783→      jitterFactor: 0.15,
+  1784→  1784→      retryableStatusCodes: [500, 502, 503, 504],
+  1785→  1785→    },
+  1786→  1786→    bulkhead: {
+  1787→  1787→      name: `api-bh-${apiName}`,
+  1788→  1788→      maxConcurrent: 20,
+  1789→  1789→      maxWaitQueueLength: 100,
+  1790→  1790→    },
+  1791→  1791→    timeout: {
+  1792→  1792→      timeoutMs: 30000,
+  1793→  1793→      timeoutErrorMessage: `API call to ${apiName} timed out`,
+  1794→  1794→    },
+  1795→  1795→    rateLimiter: {
+  1796→  1796→      limit: 200,
+  1797→  1797→      windowMs: 60000,
+  1798→  1798→    },
+  1799→  1799→  });
+  1800→  1800→}
+  1801→  1801→
+  1802→  1802→// ============== Utility Functions ==============
+  1803→  1803→
+  1804→  1804→/**
+  1805→  1805→ * Wrap any async function with circuit breaker protection
+  1806→  1806→ */
+  1807→  1807→export function withCircuitBreaker<T extends (...args: unknown[]) => unknown>(
+  1808→  1808→  fn: T,
+  1809→  1809→  config: CircuitBreakerConfig
+  1810→  1810→): (...args: Parameters<T>) => Promise<ReturnType<T>> {
+  1811→  1811→  const cb = new CircuitBreaker(config);
+  1812→  1812→  
+  1813→  1813→  return async (...args: Parameters<T>): Promise<ReturnType<T>> => {
+  1814→  1814→    return cb.execute(() => fn(...args)) as Promise<ReturnType<T>>;
+  1815→  1815→  };
+  1816→  1816→}
+  1817→  1817→
+  1818→  1818→/**
+  1819→  1819→ * Wrap any async function with retry logic
+  1820→  1820→ */
+  1821→  1821→export function withRetry<T extends (...args: unknown[]) => unknown>(
+  1822→  1822→  fn: T,
+  1823→  1823→  config: Partial<RetryConfig> = {}
+  1824→  1824→): (...args: Parameters<T>) => Promise<ReturnType<T>> {
+  1825→  1825→  const retry = new RetryHandler(config);
+  1826→  1826→  
+  1827→  1827→  return async (...args: Parameters<T>): Promise<ReturnType<T>> => {
+  1828→  1828→    return retry.execute(() => fn(...args)) as Promise<ReturnType<T>>;
+  1829→  1829→  };
+  1830→  1830→}
+  1831→  1831→
+  1832→  1832→/**
+  1833→  1833→ * Wrap any async function with timeout
+  1834→  1834→ */
+  1835→  1835→export function withTimeout<T extends (...args: unknown[]) => unknown>(
+  1836→  1836→  fn: T,
+  1837→  1837→  timeoutMs: number
+  1838→  1838→): (...args: Parameters<T>) => Promise<ReturnType<T>> {
+  1839→  1839→  const timeout = new TimeoutHandler({ timeoutMs });
+  1840→  1840→  
+  1841→  1841→  return async (...args: Parameters<T>): Promise<ReturnType<T>> => {
+  1842→  1842→    return timeout.execute(() => fn(...args)) as Promise<ReturnType<T>>;
+  1843→  1843→  };
+  1844→  1844→}
+  1845→  1845→
+  1846→  1846→// ============== Default Exports ==============
+  1847→  1847→
+  1848→  1848→export default {
+  1849→  1849→  CircuitBreaker,
+  1850→  1850→  RetryHandler,
+  1851→  1851→  Bulkhead,
+  1852→  1852→  TimeoutHandler,
+  1853→  1853→  FallbackProvider,
+  1854→  1854→  RateLimiter,
+  1855→  1855→  ResilienceManager,
+  1856→  1856→  createPaymentResilience,
+  1857→  1857→  createApiResilience,
+  1858→  1858→  withCircuitBreaker,
+  1859→  1859→  withRetry,
+  1860→  1860→  withTimeout,
+  1861→  1861→};
+  1862→  1862→

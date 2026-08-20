@@ -1,0 +1,2002 @@
+     1→     1→/**
+     2→     2→ * Machine Learning Transaction Prediction Module
+     3→     3→ * Enterprise-grade ML module for SSM-Pay payment platform
+     4→     4→ * 
+     5→     5→ * @module ml/transaction-predictor
+     6→     6→ * @description Comprehensive transaction analytics and prediction system including:
+     7→     7→ * - Time series forecasting for transaction volumes
+     8→     8→ * - Customer churn probability prediction
+     9→     9→ * - Payment success rate estimation
+    10→    10→ * - Revenue forecasting with confidence intervals
+    11→    11→ * - Seasonal pattern detection and analysis
+    12→    12→ * 
+    13→    13→ * @version 2.1.0
+    14→    14→ * @since 1.0.0
+    15→    15→ * @author SSM-Pay ML Engineering Team
+    16→    16→ */
+    17→    17→
+    18→    18→import { logger } from '@/lib/logger';
+    19→    19→import { AppError, ErrorCode } from '@/lib/errors';
+    20→    20→
+    21→    21→// ============== Model Versioning & Configuration ==============
+    22→    22→
+    23→    23→/**
+    24→    24→ * Model version information for tracking and audit purposes
+    25→    25→ */
+    26→    26→export interface ModelVersion {
+    27→    27→  /** Unique model identifier */
+    28→    28→  id: string;
+    29→    29→  /** Semantic version string */
+    30→    30→  version: string;
+    31→    31→  /** Model creation timestamp */
+    32→    32→  createdAt: Date;
+    33→    33→  /** Last training timestamp */
+    34→    34→  lastTrainedAt?: Date;
+    35→    35→  /** Training data period start */
+    36→    36→  trainingDataStart?: Date;
+    37→    37→  /** Training data period end */
+    38→    38→  trainingDataEnd?: Date;
+    39→    39→  /** Model performance metrics */
+    40→    40→  metrics?: ModelMetrics;
+    41→    41→  /** Feature set used in this version */
+    42→    42→  features: string[];
+    43→    43→  /** Hyperparameters used */
+    44→    44→  hyperparameters: Record<string, number | string | boolean>;
+    45→    45→}
+    46→    46→
+    47→    47→/**
+    48→    48→ * Model performance metrics for evaluation
+    49→    49→ */
+    50→    50→export interface ModelMetrics {
+    51→    51→  /** Mean Absolute Error */
+    52→    52→  mae: number;
+    53→    53→  /** Mean Squared Error */
+    54→    54→  mse: number;
+    55→    55→  /** Root Mean Squared Error */
+    56→    56→  rmse: number;
+    57→    57→  /** Mean Absolute Percentage Error */
+    58→    58→  mape: number;
+    59→    59→  /** R-squared score */
+    60→    60→  r2: number;
+    61→    61→  /** Accuracy score (for classification) */
+    62→    62→  accuracy?: number;
+    63→    63→  /** Precision score */
+    64→    64→  precision?: number;
+    65→    65→  /** Recall score */
+    66→    66→  recall?: number;
+    67→    67→  /** F1 score */
+    68→    68→  f1?: number;
+    69→    69→  /** AUC-ROC score */
+    70→    70→  aucRoc?: number;
+    71→    71→}
+    72→    72→
+    73→    73→/**
+    74→    74→ * Global configuration for the prediction module
+    75→    75→ */
+    76→    76→export interface PredictionConfig {
+    77→    77→  /** Enable/disable caching of predictions */
+    78→    78→  enableCache: boolean;
+    79→    79→  /** Cache TTL in milliseconds */
+    80→    80→  cacheTTL: number;
+    81→    81→  /** Default forecast horizon (days) */
+    82→    82→  defaultHorizon: number;
+    83→    83→  /** Confidence level for intervals (0-1) */
+    84→    84→  confidenceLevel: number;
+    85→    85→  /** Minimum data points required for training */
+    86→    86→  minDataPoints: number;
+    87→    87→  /** Maximum data points to use */
+    88→    88→  maxDataPoints: number;
+    89→    89→  /** Enable anomaly detection in predictions */
+    90→    90→  enableAnomalyDetection: boolean;
+    91→    91→  /** Anomaly threshold (standard deviations) */
+    92→    92→  anomalyThreshold: number;
+    93→    93→  /** Smoothing factor for exponential smoothing (0-1) */
+    94→    94→  smoothingFactor: number;
+    95→    95→  /** Window size for moving averages */
+    96→    96→  movingAverageWindow: number;
+    97→    97→  /** Seasonality period (days) */
+    98→    98→  seasonalityPeriod: number;
+    99→    99→}
+   100→   100→
+   101→   101→/** Default configuration values */
+   102→   102→const DEFAULT_CONFIG: PredictionConfig = {
+   103→   103→  enableCache: true,
+   104→   104→  cacheTTL: 5 * 60 * 1000, // 5 minutes
+   105→   105→  defaultHorizon: 30,
+   106→   106→  confidenceLevel: 0.95,
+   107→   107→  minDataPoints: 30,
+   108→   108→  maxDataPoints: 365,
+   109→   109→  enableAnomalyDetection: true,
+   110→   110→  anomalyThreshold: 2.5,
+   111→   111→  smoothingFactor: 0.3,
+   112→   112→  movingAverageWindow: 7,
+   113→   113→  seasonalityPeriod: 7, // Weekly seasonality
+   114→   114→};
+   115→   115→
+   116→   116→// ============== Core Data Interfaces ==============
+   117→   117→
+   118→   118→/**
+   119→   119→ * Raw transaction record from database
+   120→   120→ */
+   121→   121→export interface TransactionRecord {
+   122→   122→  /** Unique transaction identifier */
+   123→   123→  id: string;
+   124→   124→  /** Transaction amount in minor units (e.g., kobo) */
+   125→   125→  amount: number;
+   126→   126→  /** ISO 4217 currency code */
+   127→   127→  currency: string;
+   128→   128→  /** Transaction timestamp */
+   129→   129→  timestamp: Date;
+   130→   130→  /** Customer unique identifier */
+   131→   131→  customerId: string;
+   132→   132→  /** Merchant identifier */
+   133→   133→  merchantId: string;
+   134→   134→  /** Payment method used */
+   135→   135→  paymentMethod: PaymentMethodType;
+   136→   136→  /** Transaction status */
+   137→   137→  status: TransactionStatus;
+   138→   138→  /** Error code if failed */
+   139→   139→  errorCode?: string;
+   140→   140→  /** Device type used */
+   141→   141→  deviceType?: DeviceType;
+   142→   142→  /** Country code of customer */
+   143→   143→  countryCode?: string;
+   144→   144→  /** Transaction category/metadata */
+   145→   145→  category?: string;
+   146→   146→  /** Processing time in milliseconds */
+   147→   147→  processingTimeMs?: number;
+   148→   148→}
+   149→   149→
+   150→   150→/**
+   151→   151→ * Supported payment methods
+   152→   152→ */
+   153→   153→export type PaymentMethodType = 
+   154→   154→  | 'card'
+   155→   155→  | 'bank_transfer'
+   156→   156→  | 'wallet'
+   157→   157→  | 'ussd'
+   158→   158→  | 'qr_code'
+   159→   159→  | 'pay_with_bank';
+   160→   160→
+   161→   161→/**
+   162→   162→ * Transaction status enumeration
+   163→   163→ */
+   164→   164→export type TransactionStatus = 
+   165→   165→  | 'success'
+   166→   166→  | 'failed'
+   167→   167→  | 'pending'
+   168→   168→  | 'cancelled'
+   169→   169→  | 'refunded';
+   170→   170→
+   171→   171→/**
+   172→   172→ * Device types for transactions
+   173→   173→ */
+   174→   174→export type DeviceType = 
+   175→   175→  | 'web_desktop'
+   176→   176→  | 'web_mobile'
+   177→   177→  | 'ios_app'
+   178→   178→  | 'android_app'
+   179→   179→  | 'api'
+   180→   180→  | 'unknown';
+   181→   181→
+   182→   182→/**
+   183→   183→ * Aggregated transaction data point for time series
+   184→   184→ */
+   185→   185→export interface TimeSeriesPoint {
+   186→   186→  /** Timestamp of aggregation period */
+   187→   187→  timestamp: Date;
+   188→   188→  /** Total transaction count */
+   189→   189→  count: number;
+   190→   190→  /** Total volume (sum of amounts) */
+   191→   191→  volume: number;
+   192→   192→  /** Average transaction value */
+   193→   193→  averageAmount: number;
+   194→   194→  /** Success count */
+   195→   195→  successCount: number;
+   196→   196→  /** Failed count */
+   197→   197→  failedCount: number;
+   198→   198→  /** Unique customers count */
+   199→   199→  uniqueCustomers: number;
+   200→   200→  /** Unique merchants count */
+   201→   201→  uniqueMerchants: number;
+   202→   202→}
+   203→   203→
+   204→   204→/**
+   205→   205→ * Customer profile for churn prediction
+   206→   206→ */
+   207→   207→export interface CustomerProfile {
+   208→   208→  /** Customer unique identifier */
+   209→   209→  customerId: string;
+   210→   210→  /** Customer registration date */
+   211→   211→  registrationDate: Date;
+   212→   212→  /** Total transactions lifetime */
+   213→   213→  totalTransactions: number;
+   214→   214→  /** Total spend lifetime */
+   215→   215→  totalSpend: number;
+   216→   216→  /** Average transaction value */
+   217→   217→  avgTransactionValue: number;
+   218→   218→  /** Days since last transaction */
+   219→   219→  daysSinceLastTransaction: number;
+   220→   220→  /** Days since first transaction */
+   221→   221→  daysSinceFirstTransaction: number;
+   222→   222→  /** Transaction frequency (per month) */
+   223→   223→  transactionFrequency: number;
+   224→   224→  /** Most used payment method */
+   225→   225→  preferredPaymentMethod: PaymentMethodType;
+   226→   226→  /** Success rate (0-1) */
+   227→   227→  successRate: number;
+   228→   228→  /** Average processing time */
+   229→   229→  avgProcessingTime: number;
+   230→   230→  /** Number of failed transactions last 30 days */
+   231→   231→  failedTransactions30d: number;
+   232→   232→  /** Number of successful transactions last 30 days */
+   233→   233→  successTransactions30d: number;
+   234→   234→  /** Spend trend (-1 to 1, negative=declining) */
+   235→   235→  spendTrend: number;
+   236→   236→  /** Engagement score (0-100) */
+   237→   237→  engagementScore: number;
+   238→   238→  /** Customer tenure in days */
+   239→   239→  tenureDays: number;
+   240→   240→  /** Is premium customer */
+   241→   241→  isPremium: boolean;
+   242→   242→  /** Last transaction date */
+   243→   243→  lastTransactionDate: Date;
+   244→   244→  /** Preferred merchant IDs */
+   245→   245→  preferredMerchantIds: string[];
+   246→   246→  /** Geographic region */
+   247→   247→  region?: string;
+   248→   248→  /** Customer segment */
+   249→   249→  segment?: CustomerSegment;
+   250→   250→}
+   251→   251→
+   252→   252→/**
+   253→   253→ * Customer segmentation types
+   254→   254→ */
+   255→   255→export type CustomerSegment = 
+   256→   256→  | 'new'
+   257→   257→  | 'active'
+   258→   258→  | 'at_risk'
+   259→   259→  | 'churned'
+   260→   260→  | 'premium'
+   261→   261→  | 'inactive';
+   262→   262→
+   263→   263→/**
+   264→   264→ * Prediction result wrapper with metadata
+   265→   265→ */
+   266→   266→export interface PredictionResult<T> {
+   267→   267→  /** The predicted value(s) */
+   268→   268→  predictions: T;
+   269→   269→  /** Model version used */
+   270→   270→  modelVersion: string;
+   271→   271→  /** Prediction timestamp */
+   272→   272→  predictedAt: Date;
+   273→   273→  /** Confidence score (0-1) */
+   274→   274→  confidence: number;
+   275→   275→  /** Lower bound of confidence interval */
+   276→   276→  lowerBound?: T;
+   277→   277→  /** Upper bound of confidence interval */
+   278→   278→  upperBound?: T;
+   279→   279→  /** Features used for prediction */
+   280→   280→  featuresUsed: string[];
+   281→   281→  /** Processing time in milliseconds */
+   282→   282→  processingTimeMs: number;
+   283→   283→  /** Any warnings generated during prediction */
+   284→   284→  warnings?: string[];
+   285→   285→  /** Model metrics if available */
+   286→   286→  metrics?: ModelMetrics;
+   287→   287→}
+   288→   288→
+   289→   289→/**
+   290→   290→ * Volume prediction output structure
+   291→   291→ */
+   292→   292→export interface VolumePrediction {
+   293→   293→  /** Predicted date */
+   294→   294→  date: Date;
+   295→   295→  /** Predicted transaction count */
+   296→   296→  predictedCount: number;
+   297→   297→  /** Lower confidence bound */
+   298→   298→  lowerBound: number;
+   299→   299→  /** Upper confidence bound */
+   300→   300→  upperBound: number;
+   301→   301→  /** Point estimate */
+   302→   302→  pointEstimate: number;
+   303→   303→  /** Seasonal component */
+   304→   304→  seasonalComponent?: number;
+   305→   305→  /** Trend component */
+   306→   306→  trendComponent?: number;
+   307→   307→}
+   308→   308→
+   309→   309→/**
+   310→   310→ * Churn prediction output
+   311→   311→ */
+   312→   312→export interface ChurnPrediction {
+   313→   313→  /** Customer ID */
+   314→   314→  customerId: string;
+   315→   315→  /** Churn probability (0-1) */
+   316→   316→  churnProbability: number;
+   317→   317→  /** Risk level classification */
+   318→   318→  riskLevel: ChurnRiskLevel;
+   319→   319→  /** Key contributing factors */
+   320→   320→  factors: ChurnFactor[];
+   321→   321→  /** Recommended actions */
+   322→   322→  recommendations: string[];
+   323→   323→  /** Prediction horizon (days until likely churn) */
+   324→   324→  daysToChurn: number;
+   325→   325→}
+   326→   326→
+   327→   327→/**
+   328→   328→ * Churn risk levels
+   329→   329→ */
+   330→   330→export type ChurnRiskLevel = 'low' | 'medium' | 'high' | 'critical';
+   331→   331→
+   332→   332→/**
+   333→   333→ * Individual factor contributing to churn risk
+   334→   334→ */
+   335→   335→export interface ChurnFactor {
+   336→   336→  /** Factor name */
+   337→   337→  name: string;
+   338→   338→  /** Impact weight (0-1) */
+   339→   339→  weight: number;
+   340→   340→  /** Current value */
+   341→   341→  value: number;
+   342→   342→  /** Threshold for concern */
+   343→   343→  threshold: number;
+   344→   344→  /** Is this factor above/below threshold? */
+   345→   345→  isConcerning: boolean;
+   346→   346→}
+   347→   347→
+   348→   348→/**
+   349→   349→ * Payment success prediction output
+   350→   350→ */
+   351→   351→export interface SuccessPrediction {
+   352→   352→  /** Success probability (0-1) */
+   353→   353→  successProbability: number;
+   354→   354→  /** Risk assessment */
+   355→   355→  riskAssessment: PaymentRiskLevel;
+   356→   356→  /** Key risk indicators */
+   357→   357→  riskIndicators: RiskIndicator[];
+   358→   358→  /** Estimated processing time */
+   359→   359→  estimatedProcessingTime: number;
+   360→   360→  /** Recommended actions to improve success */
+   361→   361→  recommendations: string[];
+   362→   362→}
+   363→   363→
+   364→   364→/**
+   365→   365→ * Payment risk levels
+   366→   366→ */
+   367→   367→export type PaymentRiskLevel = 'very_low' | 'low' | 'medium' | 'high' | 'very_high';
+   368→   368→
+   369→   369→/**
+   370→   370→ * Individual risk indicator for payments
+   371→   371→ */
+   372→   372→export interface RiskIndicator {
+   373→   373→  /** Indicator name */
+   374→   374→  name: string;
+   375→   375→  /** Current value */
+   376→   376→  value: number;
+   377→   377→  /** Risk contribution (0-1) */
+   378→   378→  riskScore: number;
+   379→   379→  /** Severity level */
+   380→   380→  severity: 'info' | 'warning' | 'critical';
+   381→   381→  /** Description */
+   382→   382→  description: string;
+   383→   383→}
+   384→   384→
+   385→   385→/**
+   386→   386→ * Revenue forecast output
+   387→   387→ */
+   388→   388→export interface RevenueForecast {
+   389→   389→  /** Forecast period start */
+   390→   390→  periodStart: Date;
+   391→   391→  /** Forecast period end */
+   392→   392→  periodEnd: Date;
+   393→   393→  /** Predicted revenue */
+   394→   394→  predictedRevenue: number;
+   395→   395→  /** Lower confidence bound */
+   396→   396→  lowerBound: number;
+   397→   397→  /** Upper confidence bound */
+   398→   398→  upperBound: number;
+   399→   399→  /** Growth rate vs previous period */
+   400→   400→  growthRate: number;
+   401→   401→  /** Breakdown by category */
+   402→   402→  breakdown: RevenueBreakdown[];
+   403→   403→  /** Forecast components */
+   404→   404→  components: ForecastComponents;
+   405→   405→}
+   406→   406→
+   407→   407→/**
+   408→   408→ * Revenue breakdown by dimension
+   409→   409→ */
+   410→   410→export interface RevenueBreakdown {
+   411→   411→  /** Category/dimension name */
+   412→   412→  category: string;
+   413→   413→  /** Revenue amount */
+   414→   414→  revenue: number;
+   415→   415→  /** Percentage of total */
+   416→   416→  percentage: number;
+   417→   417→  /** Change from previous period */
+   418→   418→  changePercent: number;
+   419→   419→}
+   420→   420→
+   421→   421→/**
+   422→   422→ * Components of a forecast
+   423→   423→ */
+   424→   424→export interface ForecastComponents {
+   425→   425→  /** Base/trend component */
+   426→   426→  base: number;
+   427→   427→  /** Seasonal component */
+   428→   428→  seasonal: number;
+   429→   429→  /** Cyclical component */
+   430→   430→  cyclical: number;
+   431→   431→  /** Irregular/residual component */
+   432→   432→  irregular: number;
+   433→   433→}
+   434→   434→
+   435→   435→/**
+   436→   436→ * Seasonal pattern detection result
+   437→   437→ */
+   438→   438→export interface SeasonalPattern {
+   439→   439→  /** Detected pattern type */
+   440→   440→  patternType: SeasonalPatternType;
+   441→   441→  /** Period length (in days) */
+   442→   442→  periodDays: number;
+   443→   443→  /** Pattern strength (0-1) */
+   444→   444→  strength: number;
+   445→   445→  /** Peak periods within cycle */
+   446→   446→  peakPeriods: PeriodRange[];
+   447→   447→  /** Low periods within cycle */
+   448→   448→  lowPeriods: PeriodRange[];
+   449→   449→  /** Average amplitude */
+   450→   450→  amplitude: number;
+   451→   451→  /** Phase offset (days from reference) */
+   452→   452→  phaseOffset: number;
+   453→   453→  /** Statistical significance */
+   454→   454→  significance: number;
+   455→   455→  /** Pattern description */
+   456→   456→  description: string;
+   457→   457→}
+   458→   458→
+   459→   459→/**
+   460→   460→ * Types of seasonal patterns
+   461→   461→ */
+   462→   462→export type SeasonalPatternType = 
+   463→   463→  | 'daily'
+   464→   464→  | 'weekly'
+   465→   465→  | 'monthly'
+   466→   466→  | 'quarterly'
+   467→   467→  | 'yearly'
+   468→   468→  | 'none'
+   469→   469→  | 'mixed';
+   470→   470→
+   471→   471→/**
+   472→   472→ * Time range within a pattern cycle
+   473→   473→ */
+   474→   474→export interface PeriodRange {
+   475→   475→  /** Start position in cycle (0-based) */
+   476→   476→  start: number;
+   477→   477→  /** End position in cycle */
+   478→   478→  end: number;
+   479→   479→  /** Average multiplier during this period */
+   480→   480→  multiplier: number;
+   481→   481→  /** Label for this period */
+   482→   482→  label: string;
+   483→   483→}
+   484→   484→
+   485→   485→// ============== Statistical Utility Functions ==============
+   486→   486→
+   487→   487→/**
+   488→   488→ * Calculate mean of numeric array
+   489→   489→ * @param values - Array of numbers
+   490→   490→ * @returns Mean value
+   491→   491→ */
+   492→   492→export function calculateMean(values: number[]): number {
+   493→   493→  if (values.length === 0) return 0;
+   494→   494→  return values.reduce((sum, val) => sum + val, 0) / values.length;
+   495→   495→}
+   496→   496→
+   497→   497→/**
+   498→   498→ * Calculate standard deviation
+   499→   499→ * @param values - Array of numbers
+   500→   500→ * @returns Standard deviation (population)
+   501→   501→ */
+   502→   502→export function calculateStdDev(values: number[]): number {
+   503→   503→  if (values.length === 0) return 0;
+   504→   504→  const mean = calculateMean(values);
+   505→   505→  const squaredDiffs = values.map(val => Math.pow(val - mean, 2));
+   506→   506→  return Math.sqrt(squaredDiffs.reduce((sum, val) => sum + val, 0) / values.length);
+   507→   507→}
+   508→   508→
+   509→   509→/**
+   510→   510→ * Calculate variance
+   511→   511→ * @param values - Array of numbers
+   512→   512→ * @returns Variance
+   513→   513→ */
+   514→   514→export function calculateVariance(values: number[]): number {
+   515→   515→  const stdDev = calculateStdDev(values);
+   516→   516→  return stdDev * stdDev;
+   517→   517→}
+   518→   518→
+   519→   519→/**
+   520→   520→ * Calculate median value
+   521→   521→ * @param values - Array of numbers
+   522→   522→ * @returns Median value
+   523→   523→ */
+   524→   524→export function calculateMedian(values: number[]): number {
+   525→   525→  if (values.length === 0) return 0;
+   526→   526→  const sorted = [...values].sort((a, b) => a - b);
+   527→   527→  const mid = Math.floor(sorted.length / 2);
+   528→   528→  return sorted.length % 2 !== 0 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+   529→   529→}
+   530→   530→
+   531→   531→/**
+   532→   532→ * Calculate percentile
+   533→   533→ * @param values - Array of numbers
+   534→   534→ * @param percentile - Percentile to calculate (0-100)
+   535→   535→ * @returns Value at given percentile
+   536→   536→ */
+   537→   537→export function calculatePercentile(values: number[], percentile: number): number {
+   538→   538→  if (values.length === 0) return 0;
+   539→   539→  const sorted = [...values].sort((a, b) => a - b);
+   540→   540→  const index = (percentile / 100) * (sorted.length - 1);
+   541→   541→  const lower = Math.floor(index);
+   542→   542→  const upper = Math.ceil(index);
+   543→   543→  if (lower === upper) return sorted[lower];
+   544→   544→  return sorted[lower] * (upper - index) + sorted[upper] * (index - lower);
+   545→   545→}
+   546→   546→
+   547→   547→/**
+   548→   548→ * Calculate correlation coefficient (Pearson)
+   549→   549→ * @param x - First array of numbers
+   550→   550→ * @param y - Second array of numbers
+   551→   551→ * @returns Correlation coefficient (-1 to 1)
+   552→   552→ */
+   553→   553→export function calculateCorrelation(x: number[], y: number[]): number {
+   554→   554→  if (x.length !== y.length || x.length === 0) return 0;
+   555→   555→  
+   556→   556→  const n = x.length;
+   557→   557→  const meanX = calculateMean(x);
+   558→   558→  const meanY = calculateMean(y);
+   559→   559→  
+   560→   560→  let numerator = 0;
+   561→   561→  let denomX = 0;
+   562→   562→  let denomY = 0;
+   563→   563→  
+   564→   564→  for (let i = 0; i < n; i++) {
+   565→   565→    const dx = x[i] - meanX;
+   566→   566→    const dy = y[i] - meanY;
+   567→   567→    numerator += dx * dy;
+   568→   568→    denomX += dx * dx;
+   569→   569→    denomY += dy * dy;
+   570→   570→  }
+   571→   571→  
+   572→   572→  const denominator = Math.sqrt(denomX * denomY);
+   573→   573→  return denominator === 0 ? 0 : numerator / denominator;
+   574→   574→}
+   575→   575→
+   576→   576→/**
+   577→   577→ * Calculate coefficient of determination (R-squared)
+   578→   578→ * @param actual - Actual values
+   579→   579→ * @param predicted - Predicted values
+   580→   580→ * @returns R-squared value (0-1)
+   581→   581→ */
+   582→   582→export function calculateRSquared(actual: number[], predicted: number[]): number {
+   583→   583→  if (actual.length !== predicted.length || actual.length === 0) return 0;
+   584→   584→  
+   585→   585→  const meanActual = calculateMean(actual);
+   586→   586→  const ssTot = actual.reduce((sum, val) => sum + Math.pow(val - meanActual, 2), 0);
+   587→   587→  const ssRes = actual.reduce((sum, val, i) => sum + Math.pow(val - predicted[i], 2), 0);
+   588→   588→  
+   589→   589→  return ssTot === 0 ? 1 : 1 - (ssRes / ssTot);
+   590→   590→}
+   591→   591→
+   592→   592→/**
+   593→   593→ * Normalize values to 0-1 range using min-max scaling
+   594→   594→ * @param values - Array of numbers
+   595→   595→ * @returns Normalized array and scaling parameters
+   596→   596→ */
+   597→   597→export function normalizeMinMax(
+   598→   598→  values: number[]
+   599→   599→): { normalized: number[]; min: number; max: number; scale: number } {
+   600→   600→  if (values.length === 0) return { normalized: [], min: 0, max: 0, scale: 1 };
+   601→   601→  
+   602→   602→  const min = Math.min(...values);
+   603→   603→  const max = Math.max(...values);
+   604→   604→  const scale = max - min || 1;
+   605→   605→  
+   606→   606→  return {
+   607→   607→    normalized: values.map(val => (val - min) / scale),
+   608→   608→    min,
+   609→   609→    max,
+   610→   610→    scale,
+   611→   611→  };
+   612→   612→}
+   613→   613→
+   614→   614→/**
+   615→   615→ * Z-score normalization (standardization)
+   616→   616→ * @param values - Array of numbers
+   617→   617→ * @returns Standardized array and statistics
+   618→   618→ */
+   619→   619→export function standardizeZScore(
+   620→   620→  values: number[]
+   621→   621→): { standardized: number[]; mean: number; stdDev: number } {
+   622→   622→  if (values.length === 0) return { standardized: [], mean: 0, stdDev: 1 };
+   623→   623→  
+   624→   624→  const mean = calculateMean(values);
+   625→   625→  const stdDev = calculateStdDev(values) || 1;
+   626→   626→  
+   627→   627→  return {
+   628→   628→    standardized: values.map(val => (val - mean) / stdDev),
+   629→   629→    mean,
+   630→   630→    stdDev,
+   631→   631→  };
+   632→   632→}
+   633→   633→
+   634→   634→/**
+   635→   635→ * Apply sigmoid activation function
+   636→   636→ * @param x - Input value
+   637→   637→ * @returns Sigmoid output (0-1)
+   638→   638→ */
+   639→   639→export function sigmoid(x: number): number {
+   640→   640→  return 1 / (1 + Math.exp(-Math.max(-500, Math.min(500, x))));
+   641→   641→}
+   642→   642→
+   643→   643→/**
+   644→   644→ * Apply ReLU activation function
+   645→   645→ * @param x - Input value
+   646→   646→ * @returns ReLU output
+   647→   647→ */
+   648→   648→export function relu(x: number): number {
+   649→   649→  return Math.max(0, x);
+   650→   650→}
+   651→   651→
+   652→   652→/**
+   653→   653→ * Calculate simple moving average
+   654→   654→ * @param values - Time series data
+   655→   655→ * @param window - Window size
+   656→   656→ * @returns Moving averages array
+   657→   657→ */
+   658→   658→export function simpleMovingAverage(values: number[], window: number): number[] {
+   659→   659→  if (window <= 0 || values.length === 0) return [];
+   660→   660→  if (window >= values.length) return [calculateMean(values)];
+   661→   661→  
+   662→   662→  const result: number[] = [];
+   663→   663→  for (let i = window - 1; i < values.length; i++) {
+   664→   664→    const windowSlice = values.slice(i - window + 1, i + 1);
+   665→   665→    result.push(calculateMean(windowSlice));
+   666→   666→  }
+   667→   667→  
+   668→   668→  return result;
+   669→   669→}
+   670→   670→
+   671→   671→/**
+   672→   672→ * Calculate weighted moving average
+   673→   673→ * @param values - Time series data
+   674→   674→ * @param weights - Weights for each position (most recent first or last based on order)
+   675→   675→ * @returns Weighted moving averages array
+   676→   676→ */
+   677→   677→export function weightedMovingAverage(values: number[], weights: number[]): number[] {
+   678→   678→  if (weights.length === 0 || values.length === 0) return [];
+   679→   679→  const window = weights.length;
+   680→   680→  if (values.length < window) return [calculateMean(values)];
+   681→   681→  
+   682→   682→  const weightSum = weights.reduce((a, b) => a + b, 0);
+   683→   683→  const result: number[] = [];
+   684→   684→  
+   685→   685→  for (let i = window - 1; i < values.length; i++) {
+   686→   686→    const windowSlice = values.slice(i - window + 1, i + 1);
+   687→   687→    let weightedSum = 0;
+   688→   688→    for (let j = 0; j < window; j++) {
+   689→   689→      weightedSum += windowSlice[j] * weights[j];
+   690→   690→    }
+   691→   691→    result.push(weightedSum / weightSum);
+   692→   692→  }
+   693→   693→  
+   694→   694→  return result;
+   695→   695→}
+   696→   696→
+   697→   697→/**
+   698→   698→ * Calculate exponential moving average
+   699→   699→ * @param values - Time series data
+   700→   700→ * @param alpha - Smoothing factor (0-1), higher = more responsive
+   701→   701→ * @returns Exponential moving averages array
+   702→   702→ */
+   703→   703→export function exponentialMovingAverage(values: number[], alpha: number = 0.3): number[] {
+   704→   704→  if (values.length === 0) return [];
+   705→   705→  if (alpha <= 0 || alpha > 1) alpha = 0.3;
+   706→   706→  
+   707→   707→  const ema: number[] = [values[0]];
+   708→   708→  for (let i = 1; i < values.length; i++) {
+   709→   709→    ema.push(alpha * values[i] + (1 - alpha) * ema[i - 1]);
+   710→   710→  }
+   711→   711→  
+   712→   712→  return ema;
+   713→   713→}
+   714→   714→
+   715→   715→/**
+   716→   716→ * Apply double exponential smoothing (Holt's method)
+   717→   717→ * @param values - Time series data
+   718→   718→ * @param alpha - Level smoothing factor
+   719→   719→ * @param beta - Trend smoothing factor
+   720→   720→ * @returns Smoothed values and trend components
+   721→   721→ */
+   722→   722→export function doubleExponentialSmoothing(
+   723→   723→  values: number[],
+   724→   724→  alpha: number = 0.3,
+   725→   725→  beta: number = 0.1
+   726→   726→): { smoothed: number[]; trend: number[] } {
+   727→   727→  if (values.length < 2) {
+   728→   728→    return { smoothed: values.slice(), trend: new Array(values.length).fill(0) };
+   729→   729→  }
+   730→   730→  
+   731→   731→  const smoothed: number[] = [values[0]];
+   732→   732→  const trend: number[] = [values[1] - values[0]];
+   733→   733→  const level: number[] = [values[0]];
+   734→   734→  
+   735→   735→  for (let i = 1; i < values.length; i++) {
+   736→   736→    const prevLevel = level[i - 1];
+   737→   737→    const prevTrend = trend[i - 1];
+   738→   738→    
+   739→   739→    const newLevel = alpha * values[i] + (1 - alpha) * (prevLevel + prevTrend);
+   740→   740→    const newTrend = beta * (newLevel - prevLevel) + (1 - beta) * prevTrend;
+   741→   741→    
+   742→   742→    level.push(newLevel);
+   743→   743→    trend.push(newTrend);
+   744→   744→    smoothed.push(newLevel + newTrend);
+   745→   745→  }
+   746→   746→  
+   747→   747→  return { smoothed, trend };
+   748→   748→}
+   749→   749→
+   750→   750→/**
+   751→   751→ * Apply triple exponential smoothing (Holt-Winters)
+   752→   752→ * @param values - Time series data
+   753→   753→ * @param seasonLength - Length of seasonal cycle
+   754→   754→ * @param alpha - Level smoothing factor
+   755→   755→ * @param beta - Trend smoothing factor
+   756→   756→ * @param gamma - Seasonal smoothing factor
+   757→   757→ * @returns Smoothed values with seasonal components
+   758→   758→ */
+   759→   759→export function holtWintersSmoothing(
+   760→   760→  values: number[],
+   761→   761→  seasonLength: number = 7,
+   762→   762→  alpha: number = 0.3,
+   763→   763→  beta: number = 0.1,
+   764→   764→  gamma: number = 0.1
+   765→   765→): {
+   766→   766→  smoothed: number[];
+   767→   767→  level: number[];
+   768→   768→  trend: number[];
+   769→   769→  seasonal: number[];
+   770→   770→} {
+   771→   771→  if (values.length < seasonLength * 2) {
+   772→   772→    logger.warn('Insufficient data for Holt-Winters smoothing', {
+   773→   773→      event: 'ml.holt-warnings',
+   774→   774→      metadata: { dataLength: values.length, requiredLength: seasonLength * 2 },
+   775→   775→    });
+   776→   776→    return {
+   777→   777→      smoothed: values.slice(),
+   778→   778→      level: values.slice(),
+   779→   779→      trend: new Array(values.length).fill(0),
+   780→   780→      seasonal: new Array(values.length).fill(0),
+   781→   781→    };
+   782→   782→  }
+   783→   783→  
+   784→   784→  // Initialize seasonal indices
+   785→   785→  const seasonalIndices: number[] = [];
+   786→   786→  for (let s = 0; s < seasonLength; s++) {
+   787→   787→    const seasonValues: number[] = [];
+   788→   788→    for (let i = s; i < values.length; i += seasonLength) {
+   789→   789→      seasonValues.push(values[i]);
+   790→   790→    }
+   791→   791→    const seasonAvg = calculateMean(seasonValues);
+   792→   792→    const globalAvg = calculateMean(values);
+   793→   793→    seasonalIndices.push(globalAvg > 0 ? seasonAvg / globalAvg : 1);
+   794→   794→  }
+   795→   795→  
+   796→   796→  // Initialize level and trend using first season
+   797→   797→  let level = values[0] / seasonalIndices[0];
+   798→   798→  const initialTrend =
+   799→   799→    (calculateMean(values.slice(0, seasonLength)) -
+   800→   800→      calculateMean(values.slice(seasonLength, seasonLength * 2))) /
+   801→   801→    seasonLength;
+   802→   802→  let trend = initialTrend;
+   803→   803→  
+   804→   804→  const levels: number[] = [level];
+   805→   805→  const trends: number[] = [trend];
+   806→   806→  const seasonal: number[] = seasonalIndices.slice();
+   807→   807→  const smoothed: number[] = [];
+   808→   808→  
+   809→   809→  for (let i = 0; i < values.length; i++) {
+   810→   810→    const s = i % seasonLength;
+   811→   811→    
+   812→   812→    if (i > 0) {
+   813→   813→      // Update level, trend, and seasonal
+   814→   814→      const newLevel =
+   815→   815→        alpha * (values[i] / seasonal[s]) + (1 - alpha) * (level + trend);
+   816→   816→      const newTrend =
+   817→   817→        beta * (newLevel - level) + (1 - beta) * trend;
+   818→   818→      const newSeasonal =
+   819→   819→        gamma * (values[i] / newLevel) + (1 - gamma) * seasonal[s];
+   820→   820→      
+   821→   821→      level = newLevel;
+   822→   822→      trend = newTrend;
+   823→   823→      seasonal[s] = newSeasonal;
+   824→   824→      
+   825→   825→      levels.push(level);
+   826→   826→      trends.push(trend);
+   827→   827→    }
+   828→   828→    
+   829→   829→    smoothed.push((level + trend) * seasonal[s]);
+   830→   830→  }
+   831→   831→  
+   832→   832→  return { smoothed, level: levels, trend: trends, seasonal };
+   833→   833→}
+   834→   834→
+   835→   835→/**
+   836→   836→ * Perform linear regression
+   837→   837→ * @param x - Independent variable values
+   838→   838→ * @param y - Dependent variable values
+   839→   839→ * @returns Regression coefficients and statistics
+   840→   840→ */
+   841→   841→export function linearRegression(x: number[], y: number[]): {
+   842→   842→  slope: number;
+   843→   843→  intercept: number;
+   844→   844→  rSquared: number;
+   845→   845→  standardError: number;
+   846→   846→  predict: (x: number) => number;
+   847→   847→} {
+   848→   848→  if (x.length !== y.length || x.length < 2) {
+   849→   849→    return {
+   850→   850→      slope: 0,
+   851→   851→      intercept: 0,
+   852→   852→      rSquared: 0,
+   853→   853→      standardError: 0,
+   854→   854→      predict: (val: number) => 0,
+   855→   855→    };
+   856→   856→  }
+   857→   857→  
+   858→   858→  const n = x.length;
+   859→   859→  const meanX = calculateMean(x);
+   860→   860→  const meanY = calculateMean(y);
+   861→   861→  
+   862→   862→  let sumXY = 0;
+   863→   863→  let sumXX = 0;
+   864→   864→  
+   865→   865→  for (let i = 0; i < n; i++) {
+   866→   866→    sumXY += (x[i] - meanX) * (y[i] - meanY);
+   867→   867→    sumXX += (x[i] - meanX) * (x[i] - meanX);
+   868→   868→  }
+   869→   869→  
+   870→   870→  const slope = sumXX === 0 ? 0 : sumXY / sumXX;
+   871→   871→  const intercept = meanY - slope * meanX;
+   872→   872→  
+   873→   873→  // Calculate R-squared
+   874→   874→  const predicted = x.map(xi => slope * xi + intercept);
+   875→   875→  const rSquared = calculateRSquared(y, predicted);
+   876→   876→  
+   877→   877→  // Calculate standard error
+   878→   878→  const residuals = y.map((yi, i) => yi - predicted[i]);
+   879→   879→  const mse = residuals.reduce((sum, r) => sum + r * r, 0) / (n - 2);
+   880→   880→  const standardError = Math.sqrt(mse);
+   881→   881→  
+   882→   882→  return {
+   883→   883→    slope,
+   884→   884→    intercept,
+   885→   885→    rSquared,
+   886→   886→    standardError,
+   887→   887→    predict: (val: number) => slope * val + intercept,
+   888→   888→  };
+   889→   889→}
+   890→   890→
+   891→   891→/**
+   892→   892→ * Perform polynomial regression
+   893→   893→ * @param x - Independent variable values
+   894→   894→ * @param y - Dependent variable values
+   895→   895→ * @param degree - Polynomial degree
+   896→   896→ * @returns Coefficients and prediction function
+   897→   897→ */
+   898→   898→export function polynomialRegression(
+   899→   899→  x: number[],
+   900→   900→  y: number[],
+   901→   901→  degree: number = 2
+   902→   902→): {
+   903→   903→  coefficients: number[];
+   904→   904→  rSquared: number;
+   905→   905→  predict: (x: number) => number;
+   906→   906→} {
+   907→   907→  if (x.length !== y.length || x.length <= degree) {
+   908→   908→    return {
+   909→   909→      coefficients: new Array(degree + 1).fill(0),
+   910→   910→      rSquared: 0,
+   911→   911→      predict: (_val: number) => 0,
+   912→   912→    };
+   913→   913→  }
+   914→   914→  
+   915→   915→  // Build Vandermonde matrix and solve using normal equations
+   916→   916→  const n = x.length;
+   917→   917→  const m = degree + 1;
+   918→   918→  
+   919→   919→  // Create design matrix X
+   920→   920→  const X: number[][] = [];
+   921→   921→  for (let i = 0; i < n; i++) {
+   922→   922→    const row: number[] = [];
+   923→   923→    for (let j = 0; j < m; j++) {
+   924→   924→      row.push(Math.pow(x[i], j));
+   925→   925→    }
+   926→   926→    X.push(row);
+   927→   927→  }
+   928→   928→  
+   929→   929→  // Compute X^T * X
+   930→   930→  const XtX: number[][] = Array(m).fill(null).map(() => Array(m).fill(0));
+   931→   931→  for (let i = 0; i < m; i++) {
+   932→   932→    for (let j = 0; j < m; j++) {
+   933→   933→      for (let k = 0; k < n; k++) {
+   934→   934→        XtX[i][j] += X[k][i] * X[k][j];
+   935→   935→      }
+   936→   936→    }
+   937→   937→  }
+   938→   938→  
+   939→   939→  // Compute X^T * y
+   940→   940→  const Xty: number[] = Array(m).fill(0);
+   941→   941→  for (let i = 0; i < m; i++) {
+   942→   942→    for (let k = 0; k < n; k++) {
+   943→   943→      Xty[i] += X[k][i] * y[k];
+   944→   944→    }
+   945→   945→  }
+   946→   946→  
+   947→   947→  // Solve system using Gaussian elimination (simplified)
+   948→   948→  const coefficients = gaussianElimination(XtX, Xty);
+   949→   949→  
+   950→   950→  // Calculate R-squared
+   951→   951→  const predicted = x.map(xi =>
+   952→   952→    coefficients.reduce((sum, coef, j) => sum + coef * Math.pow(xi, j), 0)
+   953→   953→  );
+   954→   954→  const rSquared = calculateRSquared(y, predicted);
+   955→   955→  
+   956→   956→  return {
+   957→   957→    coefficients,
+   958→   958→    rSquared,
+   959→   959→    predict: (val: number) =>
+   960→   960→      coefficients.reduce((sum, coef, j) => sum + coef * Math.pow(val, j), 0),
+   961→   961→  };
+   962→   962→}
+   963→   963→
+   964→   964→/**
+   965→   965→ * Gaussian elimination for solving linear systems
+   966→   966→ * @param matrix - Coefficient matrix
+   967→   967→ * @param vector - Right-hand side vector
+   968→   968→ * @returns Solution vector
+   969→   969→ */
+   970→   970→function gaussianElimination(matrix: number[][], vector: number[]): number[] {
+   971→   971→  const n = vector.length;
+   972→   972→  const aug = matrix.map((row, i) => [...row, vector[i]]);
+   973→   973→  
+   974→   974→  // Forward elimination
+   975→   975→  for (let col = 0; col < n; col++) {
+   976→   976→    // Find pivot
+   977→   977→    let maxRow = col;
+   978→   978→    for (let row = col + 1; row < n; row++) {
+   979→   979→      if (Math.abs(aug[row][col]) > Math.abs(aug[maxRow][col])) {
+   980→   980→        maxRow = row;
+   981→   981→      }
+   982→   982→    }
+   983→   983→    
+   984→   984→    [aug[col], aug[maxRow]] = [aug[maxRow], aug[col]];
+   985→   985→    
+   986→   986→    if (Math.abs(aug[col][col]) < 1e-10) continue;
+   987→   987→    
+   988→   988→    for (let row = col + 1; row < n; row++) {
+   989→   989→      const factor = aug[row][col] / aug[col][col];
+   990→   990→      for (let j = col; j <= n; j++) {
+   991→   991→        aug[row][j] -= factor * aug[col][j];
+   992→   992→      }
+   993→   993→    }
+   994→   994→  }
+   995→   995→  
+   996→   996→  // Back substitution
+   997→   997→  const solution = new Array(n).fill(0);
+   998→   998→  for (let row = n - 1; row >= 0; row--) {
+   999→   999→    if (Math.abs(aug[row][row]) < 1e-10) {
+  1000→  1000→      solution[row] = 0;
+  1001→  1001→      continue;
+  1002→  1002→    }
+  1003→  1003→    solution[row] = aug[row][n];
+  1004→  1004→    for (let col = row + 1; col < n; col++) {
+  1005→  1005→      solution[row] -= aug[row][col] * solution[col];
+  1006→  1006→    }
+  1007→  1007→    solution[row] /= aug[row][row];
+  1008→  1008→  }
+  1009→  1009→  
+  1010→  1010→  return solution;
+  1011→  1011→}
+  1012→  1012→
+  1013→  1013→/**
+  1014→  1014→ * Detect anomalies using z-score method
+  1015→  1015→ * @param values - Data series
+  1016→  1016→ * @param threshold - Number of standard deviations
+  1017→  1017→ * @returns Array of anomaly indices and scores
+  1018→  1018→ */
+  1019→  1019→export function detectAnomaliesZScore(
+  1020→  1020→  values: number[],
+  1021→  1021→  threshold: number = 2.5
+  1022→  1022→): { index: number; value: number; zScore: number }[] {
+  1023→  1023→  const { standardized, mean, stdDev } = standardizeZScore(values);
+  1024→  1024→  const anomalies: { index: number; value: number; zScore: number }[] = [];
+  1025→  1025→  
+  1026→  1026→  for (let i = 0; i < standardized.length; i++) {
+  1027→  1027→    if (Math.abs(standardized[i]) > threshold) {
+  1028→  1028→      anomalies.push({
+  1029→  1029→        index: i,
+  1030→  1030→        value: values[i],
+  1031→  1031→        zScore: standardized[i],
+  1032→  1032→      });
+  1033→  1033→    }
+  1034→  1034→  }
+  1035→  1035→  
+  1036→  1036→  return anomalies;
+  1037→  1037→}
+  1038→  1038→
+  1039→  1039→/**
+  1040→  1040→ * Detect anomalies using IQR method
+  1041→  1041→ * @param values - Data series
+  1042→  1042→ * @param multiplier - IQR multiplier (typically 1.5)
+  1043→  1043→ * @returns Anomaly indices and values
+  1044→  1044→ */
+  1045→  1045→export function detectAnomaliesIQR(
+  1046→  1046→  values: number[],
+  1047→  1047→  multiplier: number = 1.5
+  1048→  1048→): { index: number; value: number; type: 'outlier_high' | 'outlier_low' }[] {
+  1049→  1049→  if (values.length === 0) return [];
+  1050→  1050→  
+  1051→  1051→  const q1 = calculatePercentile(values, 25);
+  1052→  1052→  const q3 = calculatePercentile(values, 75);
+  1053→  1053→  const iqr = q3 - q1;
+  1054→  1054→  const lowerBound = q1 - multiplier * iqr;
+  1055→  1055→  const upperBound = q3 + multiplier * iqr;
+  1056→  1056→  
+  1057→  1057→  const anomalies: { index: number; value: number; type: 'outlier_high' | 'outlier_low' }[] = [];
+  1058→  1058→  
+  1059→  1059→  for (let i = 0; i < values.length; i++) {
+  1060→  1060→    if (values[i] < lowerBound) {
+  1061→  1061→      anomalies.push({ index: i, value: values[i], type: 'outlier_low' });
+  1062→  1062→    } else if (values[i] > upperBound) {
+  1063→  1063→      anomalies.push({ index: i, value: values[i], type: 'outlier_high' });
+  1064→  1064→    }
+  1065→  1065→  }
+  1066→  1066→  
+  1067→  1067→  return anomalies;
+  1068→  1068→}
+  1069→  1069→
+  1070→  1070→// ============== Main Prediction Class ==============
+  1071→  1071→
+  1072→  1072→/**
+  1073→  1073→ * Parameters for payment success prediction
+  1074→  1074→ */
+  1075→  1075→export interface PaymentSuccessParams {
+  1076→  1076→  /** Transaction amount */
+  1077→  1077→  amount: number;
+  1078→  1078→  /** Payment method */
+  1079→  1079→  paymentMethod: PaymentMethodType;
+  1080→  1080→  /** Customer ID (optional for guest checkouts) */
+  1081→  1081→  customerId?: string;
+  1082→  1082→  /** Currency code */
+  1083→  1083→  currency?: string;
+  1084→  1084→  /** Device type */
+  1085→  1085→  deviceType?: DeviceType;
+  1086→  1086→  /** Country code */
+  1087→  1087→  countryCode?: string;
+  1088→  1088→  /** Is this a new customer? */
+  1089→  1089→  isNewCustomer?: boolean;
+  1090→  1090→  /** Time of day (0-23) */
+  1091→  1091→  hourOfDay?: number;
+  1092→  1092→  /** Day of week (0-6, Sunday=0) */
+  1093→  1093→  dayOfWeek?: number;
+  1094→  1094→}
+  1095→  1095→
+  1096→  1096→/**
+  1097→  1097→ * Transaction Predictor Class
+  1098→  1098→ * Main entry point for all ML prediction operations
+  1099→  1099→ */
+  1100→  1100→export class TransactionPredictor {
+  1101→  1101→  private config: PredictionConfig;
+  1102→  1102→  private modelVersion: ModelVersion;
+  1103→  1103→  private cache: Map<string, { data: unknown; timestamp: number }> = new Map();
+  1104→  1104→  private trainingData: TimeSeriesPoint[] = [];
+  1105→  1105→  private customerProfiles: Map<string, CustomerProfile> = new Map();
+  1106→  1106→
+  1107→  1107→  /**
+  1108→  1108→   * Create a new TransactionPredictor instance
+  1109→  1109→   * @param config - Optional configuration overrides
+  1110→  1110→   */
+  1111→  1111→  constructor(config?: Partial<PredictionConfig>) {
+  1112→  1112→    this.config = { ...DEFAULT_CONFIG, ...config };
+  1113→  1113→    this.modelVersion = this.initializeModelVersion();
+  1114→  1114→    
+  1115→  1115→    logger.info('TransactionPredictor initialized', {
+  1116→  1116→      event: 'ml.predictor.init',
+  1117→  1117→      metadata: {
+  1118→  1118→        version: this.modelVersion.version,
+  1119→  1119→        config: this.config,
+  1120→  1120→      },
+  1121→  1121→    });
+  1122→  1122→  }
+  1123→  1123→
+  1124→  1124→  /**
+  1125→  1125→   * Initialize model version metadata
+  1126→  1126→   * @private
+  1127→  1127→   */
+  1128→  1128→  private initializeModelVersion(): ModelVersion {
+  1129→  1129→    return {
+  1130→  1130→      id: `tx-predictor-v${Date.now()}`,
+  1131→  1131→      version: '2.1.0',
+  1132→  1132→      createdAt: new Date(),
+  1133→  1133→      features: [
+  1134→  1134→        'transaction_count',
+  1135→  1135→        'transaction_volume',
+  1136→  1136→        'avg_amount',
+  1137→  1137→        'success_rate',
+  1138→  1138→        'customer_frequency',
+  1139→  1139→        'time_features',
+  1140→  1140→        'seasonal_components',
+  1141→  1141→        'trend_indicators',
+  1142→  1142→      ],
+  1143→  1143→      hyperparameters: {
+  1144→  1144→        smoothingFactor: DEFAULT_CONFIG.smoothingFactor,
+  1145→  1145→        movingAverageWindow: DEFAULT_CONFIG.movingAverageWindow,
+  1146→  1146→        seasonalityPeriod: DEFAULT_CONFIG.seasonalityPeriod,
+  1147→  1147→        confidenceLevel: DEFAULT_CONFIG.confidenceLevel,
+  1148→  1148→        anomalyThreshold: DEFAULT_CONFIG.anomalyThreshold,
+  1149→  1149→      },
+  1150→  1150→    };
+  1151→  1151→  }
+  1152→  1152→
+  1153→  1153→  /**
+  1154→  1154→   * Get current model version info
+  1155→  1155→   * @returns Model version object
+  1156→  1156→   */
+  1157→  1157→  getModelVersion(): ModelVersion {
+  1158→  1158→    return { ...this.modelVersion };
+  1159→  1159→  }
+  1160→  1160→
+  1161→  1161→  /**
+  1162→  1162→   * Update configuration
+  1163→  1163→   * @param updates - Configuration updates to apply
+  1164→  1164→   */
+  1165→  1165→  updateConfig(updates: Partial<PredictionConfig>): void {
+  1166→  1166→    this.config = { ...this.config, ...updates };
+  1167→  1167→    logger.info('Configuration updated', {
+  1168→  1168→      event: 'ml.predictor.config-update',
+  1169→  1169→      metadata: { updates },
+  1170→  1170→    });
+  1171→  1171→  }
+  1172→  1172→
+  1173→  1173→  /**
+  1174→  1174→   * Load training data for the predictor
+  1175→  1175→   * @param data - Time series data points
+  1176→  1176→   */
+  1177→  1177→  loadTrainingData(data: TimeSeriesPoint[]): void {
+  1178→  1178→    if (data.length < this.config.minDataPoints) {
+  1179→  1179→      throw new AppError(
+  1180→  1180→        `Insufficient training data: ${data.length} points provided, minimum ${this.config.minDataPoints} required`,
+  1181→  1181→        ErrorCode.VALIDATION_ERROR,
+  1182→  1182→        { severity: 'warning' }
+  1183→  1183→      );
+  1184→  1184→    }
+  1185→  1185→    
+  1186→  1186→    // Sort by timestamp and limit size
+  1187→  1187→    this.trainingData = data
+  1188→  1188→      .sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime())
+  1189→  1189→      .slice(-this.config.maxDataPoints);
+  1190→  1190→    
+  1191→  1191→    this.modelVersion.trainingDataStart = this.trainingData[0]?.timestamp;
+  1192→  1192→    this.modelVersion.trainingDataEnd = this.trainingData[this.trainingData.length - 1]?.timestamp;
+  1193→  1193→    this.modelVersion.lastTrainedAt = new Date();
+  1194→  1194→    
+  1195→  1195→    logger.info('Training data loaded', {
+  1196→  1196→      event: 'ml.predictor.data-loaded',
+  1197→  1197→      metadata: {
+  1198→  1198→        dataPoints: this.trainingData.length,
+  1199→  1199→        dateRange: {
+  1200→  1200→          from: this.modelVersion.trainingDataStart?.toISOString(),
+  1201→  1201→          to: this.modelVersion.trainingDataEnd?.toISOString(),
+  1202→  1202→        },
+  1203→  1203→      },
+  1204→  1204→    });
+  1205→  1205→  }
+  1206→  1206→
+  1207→  1207→  /**
+  1208→  1208→   * Load customer profiles for churn prediction
+  1209→  1209→   * @param profiles - Array of customer profiles
+  1210→  1210→   */
+  1211→  1211→  loadCustomerProfiles(profiles: CustomerProfile[]): void {
+  1212→  1212→    for (const profile of profiles) {
+  1213→  1213→      this.customerProfiles.set(profile.customerId, profile);
+  1214→  1214→    }
+  1215→  1215→    
+  1216→  1216→    logger.info('Customer profiles loaded', {
+  1217→  1217→      event: 'ml.predictor.profiles-loaded',
+  1218→  1218→      metadata: { count: profiles.length },
+  1219→  1219→    });
+  1220→  1220→  }
+  1221→  1221→
+  1222→  1222→  // ============== Cache Management ==============
+  1223→  1223→
+  1224→  1224→  /**
+  1225→  1225→   * Generate cache key from inputs
+  1226→  1226→   * @private
+  1227→  1227→   */
+  1228→  1228→  private generateCacheKey(prefix: string, ...args: unknown[]): string {
+  1229→  1229→    return `${prefix}:${JSON.stringify(args)}`;
+  1230→  1230→  }
+  1231→  1231→
+  1232→  1232→  /**
+  1233→  1233→   * Get cached result if valid
+  1234→  1234→   * @private
+  1235→  1235→   */
+  1236→  1236→  private getCached<T>(key: string): T | null {
+  1237→  1237→    if (!this.config.enableCache) return null;
+  1238→  1238→    
+  1239→  1239→    const cached = this.cache.get(key);
+  1240→  1240→    if (!cached) return null;
+  1241→  1241→    
+  1242→  1242→    if (Date.now() - cached.timestamp > this.config.cacheTTL) {
+  1243→  1243→      this.cache.delete(key);
+  1244→  1244→      return null;
+  1245→  1245→    }
+  1246→  1246→    
+  1247→  1247→    return cached.data as T;
+  1248→  1248→  }
+  1249→  1249→
+  1250→  1250→  /**
+  1251→  1251→   * Store result in cache
+  1252→  1252→   * @private
+  1253→  1253→   */
+  1254→  1254→  private setCache<T>(key: string, data: T): void {
+  1255→  1255→    if (!this.config.enableCache) return;
+  1256→  1256→    this.cache.set(key, { data, timestamp: Date.now() });
+  1257→  1257→  }
+  1258→  1258→
+  1259→  1259→  /**
+  1260→  1260→   * Clear all cached predictions
+  1261→  1261→   */
+  1262→  1262→  clearCache(): void {
+  1263→  1263→    this.cache.clear();
+  1264→  1264→    logger.debug('Prediction cache cleared', { event: 'ml.predictor.cache-cleared' });
+  1265→  1265→  }
+  1266→  1266→
+  1267→  1267→  // ============== Volume Prediction ==============
+  1268→  1268→
+  1269→  1269→  /**
+  1270→  1270→   * Predict future transaction volumes using time series forecasting
+  1271→  1271→   * @param horizon - Number of days to forecast
+  1272→  1272→   * @returns Prediction result with daily forecasts
+  1273→  1273→   */
+  1274→  1274→  async predictVolume(horizon: number = this.config.defaultHorizon): Promise<PredictionResult<VolumePrediction[]>> {
+  1275→  1275→    const startTime = Date.now();
+  1276→  1276→    const cacheKey = this.generateCacheKey('volume', horizon);
+  1277→  1277→    
+  1278→  1278→    const cached = this.getCached<PredictionResult<VolumePrediction[]>>(cacheKey);
+  1279→  1279→    if (cached) return cached;
+  1280→  1280→
+  1281→  1281→    if (this.trainingData.length < this.config.minDataPoints) {
+  1282→  1282→      throw new AppError(
+  1283→  1283→        'Insufficient training data for volume prediction',
+  1284→  1284→        ErrorCode.VALIDATION_ERROR,
+  1285→  1285→        { severity: 'error', context: { required: this.config.minDataPoints, available: this.trainingData.length } }
+  1286→  1286→      );
+  1287→  1287→    }
+  1288→  1288→
+  1289→  1289→    try {
+  1290→  1290→      const counts = this.trainingData.map(d => d.count);
+  1291→  1291→      const volumes = this.trainingData.map(d => d.volume);
+  1292→  1292→      
+  1293→  1293→      // Apply Holt-Winters for seasonal forecasting
+  1294→  1294→      const hwCounts = holtWintersSmoothing(counts, this.config.seasonalityPeriod);
+  1295→  1295→      const hwVolumes = holtWintersSmoothing(volumes, this.config.seasonalityPeriod);
+  1296→  1296→      
+  1297→  1297→      // Get trend from double exponential smoothing
+  1298→  1298→      const deCounts = doubleExponentialSmoothing(counts);
+  1299→  1299→      const deVolumes = doubleExponentialSmoothing(volumes);
+  1300→  1300→      
+  1301→  1301→      // Calculate seasonal indices
+  1302→  1302→      const seasonalIndices = this.calculateSeasonalIndices(counts);
+  1303→  1303→      
+  1304→  1304→      // Generate forecasts
+  1305→  1305→      const predictions: VolumePrediction[] = [];
+  1306→  1306→      const lastDate = this.trainingData[this.trainingData.length - 1].timestamp;
+  1307→  1307→      const lastLevel = hwCounts.level[hwCounts.level.length - 1];
+  1308→  1308→      const lastTrend = hwCounts.trend[hwCounts.trend.length - 1];
+  1309→  1309→      
+  1310→  1310→      // Calculate prediction interval width based on historical error
+  1311→  1311→      const residuals = counts.map((c, i) => c - (hwCounts.smoothed[i] || c));
+  1312→  1312→      const residualStd = calculateStdDev(residuals);
+  1313→  1313→      const zValue = this.getZValue(this.config.confidenceLevel);
+  1314→  1314→      
+  1315→  1315→      for (let i = 1; i <= horizon; i++) {
+  1316→  1316→        const forecastDate = new Date(lastDate);
+  1317→  1317→        forecastDate.setDate(forecastDate.getDate() + i);
+  1318→  1318→        
+  1319→  1319→        const seasonalIndex = seasonalIndices[(this.trainingData.length + i - 1) % seasonalIndices.length];
+  1320→  1320→        const trendComponent = lastTrend * i;
+  1321→  1321→        const baseForecast = (lastLevel + trendComponent) * seasonalIndex;
+  1322→  1322→        
+  1323→  1323→        // Widen confidence intervals further into the future
+  1324→  1324→        const uncertaintyMultiplier = Math.sqrt(i);
+  1325→  1325→        const intervalWidth = zValue * residualStd * uncertaintyMultiplier;
+  1326→  1326→        
+  1327→  1327→        predictions.push({
+  1328→  1328→          date: forecastDate,
+  1329→  1329→          predictedCount: Math.round(Math.max(0, baseForecast)),
+  1330→  1330→          lowerBound: Math.round(Math.max(0, baseForecast - intervalWidth)),
+  1331→  1331→          upperBound: Math.round(baseForecast + intervalWidth),
+  1332→  1332→          pointEstimate: Math.round(Math.max(0, baseForecast)),
+  1333→  1333→          seasonalComponent: seasonalIndex,
+  1334→  1334→          trendComponent: trendComponent,
+  1335→  1335→        });
+  1336→  1336→      }
+  1337→  1337→      
+  1338→  1338→      // Calculate model metrics
+  1339→  1339→      const fittedValues = hwCounts.smoothed.slice(-counts.length);
+  1340→  1340→      const metrics = this.calculateMetrics(counts, fittedValues);
+  1341→  1341→      
+  1342→  1342→      const result: PredictionResult<VolumePrediction[]> = {
+  1343→  1343→        predictions,
+  1344→  1344→        modelVersion: this.modelVersion.version,
+  1345→  1345→        predictedAt: new Date(),
+  1346→  1346→        confidence: this.config.confidenceLevel,
+  1347→  1347→        featuresUsed: ['count', 'volume', 'seasonal_indices', 'trend'],
+  1348→  1348→        processingTimeMs: Date.now() - startTime,
+  1349→  1349→        metrics,
+  1350→  1350→      };
+  1351→  1351→      
+  1352→  1352→      this.setCache(cacheKey, result);
+  1353→  1353→      
+  1354→  1354→      logger.info('Volume prediction completed', {
+  1355→  1355→        event: 'ml.predictor.volume-complete',
+  1356→  1356→        metadata: {
+  1357→  1357→          horizon,
+  1358→  1358→          processingTimeMs: result.processingTimeMs,
+  1359→  1359→          firstPrediction: predictions[0]?.predictedCount,
+  1360→  1360→          lastPrediction: predictions[predictions.length - 1]?.predictedCount,
+  1361→  1361→        },
+  1362→  1362→      });
+  1363→  1363→      
+  1364→  1364→      return result;
+  1365→  1365→    } catch (error) {
+  1366→  1366→      logger.error('Volume prediction failed', {
+  1367→  1367→        event: 'ml.predictor.volume-error',
+  1368→  1368→        error: error instanceof Error ? error : new Error(String(error)),
+  1369→  1369→      });
+  1370→  1370→      throw error instanceof AppError ? error : new AppError(
+  1371→  1371→        'Failed to generate volume prediction',
+  1372→  1372→        ErrorCode.UNKNOWN_ERROR,
+  1373→  1373→        { cause: error instanceof Error ? error : undefined }
+  1374→  1374→      );
+  1375→  1375→    }
+  1376→  1376→  }
+  1377→  1377→
+  1378→  1378→  /**
+  1379→  1379→   * Calculate seasonal indices from historical data
+  1380→  1380→   * @private
+  1381→  1381→   */
+  1382→  1382→  private calculateSeasonalIndices(values: number[]): number[] {
+  1383→  1383→    const period = this.config.seasonalityPeriod;
+  1384→  1384→    const indices: number[] = [];
+  1385→  1385→    const overallMean = calculateMean(values);
+  1386→  1386→    
+  1387→  1387→    if (overallMean === 0) return new Array(period).fill(1);
+  1388→  1388→    
+  1389→  1389→    for (let s = 0; s < period; s++) {
+  1390→  1390→      const seasonValues: number[] = [];
+  1391→  1391→      for (let i = s; i < values.length; i += period) {
+  1392→  1392→        seasonValues.push(values[i]);
+  1393→  1393→      }
+  1394→  1394→      indices.push(calculateMean(seasonValues) / overallMean);
+  1395→  1395→    }
+  1396→  1396→    
+  1397→  1397→    return indices;
+  1398→  1398→  }
+  1399→  1399→
+  1400→  1400→  /**
+  1401→  1401→   * Get Z-value for confidence level
+  1402→  1402→   * @private
+  1403→  1403→   */
+  1404→  1404→  private getZValue(confidence: number): number {
+  1405→  1405→    const zScores: Record<number, number> = {
+  1406→  1406→      0.90: 1.645,
+  1407→  1407→      0.95: 1.96,
+  1408→  1408→      0.99: 2.576,
+  1409→  1409→    };
+  1410→  1410→    // Find closest match or interpolate
+  1411→  1411→    const keys = Object.keys(zScores).map(Number).sort((a, b) => a - b);
+  1412→  1412→    for (const key of keys) {
+  1413→  1413→      if (confidence <= key) return zScores[key];
+  1414→  1414→    }
+  1415→  1415→    return 1.96; // Default to 95%
+  1416→  1416→  }
+  1417→  1417→
+  1418→  1418→  // ============== Churn Prediction ==============
+  1419→  1419→
+  1420→  1420→  /**
+  1421→  1421→   * Predict customer churn probability
+  1422→  1422→   * @param customerId - Customer ID to analyze
+  1423→  1423→   * @returns Churn prediction with risk factors
+  1424→  1424→   */
+  1425→  1425→  async predictChurn(customerId: string): Promise<PredictionResult<ChurnPrediction>> {
+  1426→  1426→    const startTime = Date.now();
+  1427→  1427→    const cacheKey = this.generateCacheKey('churn', customerId);
+  1428→  1428→    
+  1429→  1429→    const cached = this.getCached<PredictionResult<ChurnPrediction>>(cacheKey);
+  1430→  1430→    if (cached) return cached;
+  1431→  1431→
+  1432→  1432→    const profile = this.customerProfiles.get(customerId);
+  1433→  1433→    
+  1434→  1434→    if (!profile) {
+  1435→  1435→      throw new AppError(
+  1436→  1436→        `Customer profile not found: ${customerId}`,
+  1437→  1437→        ErrorCode.VALIDATION_ERROR,
+  1438→  1438→        { severity: 'warning', context: { customerId } }
+  1439→  1439→      );
+  1440→  1440→    }
+  1441→  1441→
+  1442→  1442→    try {
+  1443→  1443→      // Calculate churn probability using logistic regression-like scoring
+  1444→  1444→      const factors = this.calculateChurnFactors(profile);
+  1445→  1445→      const churnProbability = this.calculateLogisticScore(factors);
+  1446→  1446→      
+  1447→  1447→      // Determine risk level
+  1448→  1448→      const riskLevel = this.classifyChurnRisk(churnProbability);
+  1449→  1449→      
+  1450→  1450→      // Estimate days until churn
+  1451→  1451→      const daysToChurn = this.estimateDaysToChurn(profile, churnProbability);
+  1452→  1452→      
+  1453→  1453→      // Generate recommendations
+  1454→  1454→      const recommendations = this.generateChurnRecommendations(profile, factors, riskLevel);
+  1455→  1455→      
+  1456→  1456→      const prediction: ChurnPrediction = {
+  1457→  1457→        customerId,
+  1458→  1458→        churnProbability,
+  1459→  1459→        riskLevel,
+  1460→  1460→        factors,
+  1461→  1461→        recommendations,
+  1462→  1462→        daysToChurn,
+  1463→  1463→      };
+  1464→  1464→      
+  1465→  1465→      const result: PredictionResult<ChurnPrediction> = {
+  1466→  1466→        predictions: prediction,
+  1467→  1467→        modelVersion: this.modelVersion.version,
+  1468→  1468→        predictedAt: new Date(),
+  1469→  1469→        confidence: this.calculatePredictionConfidence(factors),
+  1470→  1470→        featuresUsed: factors.map(f => f.name),
+  1471→  1471→        processingTimeMs: Date.now() - startTime,
+  1472→  1472→      };
+  1473→  1473→      
+  1474→  1474→      this.setCache(cacheKey, result);
+  1475→  1475→      
+  1476→  1476→      logger.info('Churn prediction completed', {
+  1477→  1477→        event: 'ml.predictor.churn-complete',
+  1478→  1478→        metadata: {
+  1479→  1479→          customerId,
+  1480→  1480→          churnProbability,
+  1481→  1481→          riskLevel,
+  1482→  1482→          processingTimeMs: result.processingTimeMs,
+  1483→  1483→        },
+  1484→  1484→      });
+  1485→  1485→      
+  1486→  1486→      return result;
+  1487→  1487→    } catch (error) {
+  1488→  1488→      logger.error('Churn prediction failed', {
+  1489→  1489→        event: 'ml.predictor.churn-error',
+  1490→  1490→        metadata: { customerId },
+  1491→  1491→        error: error instanceof Error ? error : new Error(String(error)),
+  1492→  1492→      });
+  1493→  1493→      throw error instanceof AppError ? error : new AppError(
+  1494→  1494→        'Failed to generate churn prediction',
+  1495→  1495→        ErrorCode.UNKNOWN_ERROR,
+  1496→  1496→        { cause: error instanceof Error ? error : undefined }
+  1497→  1497→      );
+  1498→  1498→    }
+  1499→  1499→  }
+  1500→  1500→
+  1501→  1501→  /**
+  1502→  1502→   * Calculate individual churn factors
+  1503→  1503→   * @private
+  1504→  1504→   */
+  1505→  1505→  private calculateChurnFactors(profile: CustomerProfile): ChurnFactor[] {
+  1506→  1506→    const factors: ChurnFactor[] = [];
+  1507→  1507→    
+  1508→  1508→    // Recency factor - most important
+  1509→  1509→    factors.push({
+  1510→  1510→      name: 'recency',
+  1511→  1511→      weight: 0.25,
+  1512→  1512→      value: profile.daysSinceLastTransaction,
+  1513→  1513→      threshold: 30,
+  1514→  1514→      isConcerning: profile.daysSinceLastTransaction > 30,
+  1515→  1515→    });
+  1516→  1516→    
+  1517→  1517→    // Frequency factor
+  1518→  1518→    factors.push({
+  1519→  1519→      name: 'frequency',
+  1520→  1520→      weight: 0.20,
+  1521→  1521→      value: profile.transactionFrequency,
+  1522→  1522→      threshold: 2,
+  1523→  1523→      isConcerning: profile.transactionFrequency < 2,
+  1524→  1524→    });
+  1525→  1525→    
+  1526→  1526→    // Engagement score
+  1527→  1527→    factors.push({
+  1528→  1528→      name: 'engagement',
+  1529→  1529→      weight: 0.15,
+  1530→  1530→      value: profile.engagementScore,
+  1531→  1531→      threshold: 40,
+  1532→  1532→      isConcerning: profile.engagementScore < 40,
+  1533→  1533→    });
+  1534→  1534→    
+  1535→  1535→    // Success rate
+  1536→  1536→    factors.push({
+  1537→  1537→      name: 'success_rate',
+  1538→  1538→      weight: 0.15,
+  1539→  1539→      value: profile.successRate,
+  1540→  1540→      threshold: 0.8,
+  1541→  1541→      isConcerning: profile.successRate < 0.8,
+  1542→  1542→    });
+  1543→  1543→    
+  1544→  1544→    // Spend trend
+  1545→  1545→    factors.push({
+  1546→  1546→      name: 'spend_trend',
+  1547→  1547→      weight: 0.15,
+  1548→  1548→      value: profile.spendTrend,
+  1549→  1549→      threshold: -0.2,
+  1550→  1550→      isConcerning: profile.spendTrend < -0.2,
+  1551→  1551→    });
+  1552→  1552→    
+  1553→  1553→    // Recent failures
+  1554→  1554→    factors.push({
+  1555→  1555→      name: 'recent_failures',
+  1556→  1556→      weight: 0.10,
+  1557→  1557→      value: profile.failedTransactions30d,
+  1558→  1558→      threshold: 3,
+  1559→  1559→      isConcerning: profile.failedTransactions30d > 3,
+  1560→  1560→    });
+  1561→  1561→    
+  1562→  1562→    return factors;
+  1563→  1563→  }
+  1564→  1564→
+  1565→  1565→  /**
+  1566→  1566→   * Calculate logistic-style churn score
+  1567→  1567→   * @private
+  1568→  1568→   */
+  1569→  1569→  private calculateLogisticScore(factors: ChurnFactor[]): number {
+  1570→  1570→    let weightedSum = 0;
+  1571→  1571→    let totalWeight = 0;
+  1572→  1572→    
+  1573→  1573→    for (const factor of factors) {
+  1574→  1574→      // Normalize factor value to 0-1 range based on whether concerning
+  1575→  1575→      const normalizedValue = factor.isConcerning ? 1 : 0.3;
+  1576→  1576→      weightedSum += factor.weight * normalizedValue;
+  1577→  1577→      totalWeight += factor.weight;
+  1578→  1578→    }
+  1579→  1579→    
+  1580→  1580→    const rawScore = totalWeight > 0 ? weightedSum / totalWeight : 0;
+  1581→  1581→    
+  1582→  1582→    // Apply sigmoid to get probability
+  1583→  1583→    // Shift to make moderate scores map to reasonable probabilities
+  1584→  1584→    return sigmoid((rawScore - 0.4) * 10);
+  1585→  1585→  }
+  1586→  1586→
+  1587→  1587→  /**
+  1588→  1588→   * Classify churn risk level
+  1589→  1589→   * @private
+  1590→  1590→   */
+  1591→  1591→  private classifyChurnRisk(probability: number): ChurnRiskLevel {
+  1592→  1592→    if (probability >= 0.8) return 'critical';
+  1593→  1593→    if (probability >= 0.6) return 'high';
+  1594→  1594→    if (probability >= 0.35) return 'medium';
+  1595→  1595→    return 'low';
+  1596→  1596→  }
+  1597→  1597→
+  1598→  1598→  /**
+  1599→  1599→   * Estimate days until likely churn
+  1600→  1600→   * @private
+  1601→  1601→   */
+  1602→  1602→  private estimateDaysToChurn(profile: CustomerProfile, churnProb: number): number {
+  1603→  1603→    // Base estimate on recency and probability
+  1604→  1604→    const baseDays = profile.daysSinceLastTransaction;
+  1605→  1605→    const probAdjustment = Math.round((1 - churnProb) * 60); // Higher prob = sooner
+  1606→  1606→    
+  1607→  1607→    return Math.max(1, Math.min(baseDays, baseDays + 30 - probAdjustment));
+  1608→  1608→  }
+  1609→  1609→
+  1610→  1610→  /**
+  1611→  1611→   * Generate churn prevention recommendations
+  1612→  1612→   * @private
+  1613→  1613→   */
+  1614→  1614→  private generateChurnRecommendations(
+  1615→  1615→    profile: CustomerProfile,
+  1616→  1616→    factors: ChurnFactor[],
+  1617→  1617→    riskLevel: ChurnRiskLevel
+  1618→  1618→  ): string[] {
+  1619→  1619→    const recommendations: string[] = [];
+  1620→  1620→    
+  1621→  1621→    for (const factor of factors) {
+  1622→  1622→      if (!factor.isConcerning) continue;
+  1623→  1623→      
+  1624→  1624→      switch (factor.name) {
+  1625→  1625→        case 'recency':
+  1626→  1626→          recommendations.push('Send re-engagement email or push notification');
+  1627→  1627→          recommendations.push('Offer time-limited incentive for next transaction');
+  1628→  1628→          break;
+  1629→  1629→        case 'frequency':
+  1630→  1630→          recommendations.push('Introduce loyalty program benefits');
+  1631→  1631→          recommendations.push('Create usage reminders or tips');
+  1632→  1632→          break;
+  1633→  1633→        case 'engagement':
+  1634→  1634→          recommendations.push('Personalize user experience based on preferences');
+  1635→  1635→          recommendations.push('Reach out for feedback on improving experience');
+  1636→  1636→          break;
+  1637→  1637→        case 'success_rate':
+  1638→  1638→          recommendations.push('Review and address common failure reasons');
+  1639→  1639→          recommendations.push('Offer alternative payment methods');
+  1640→  1640→          break;
+  1641→  1641→        case 'spend_trend':
+  1642→  1642→          recommendations.push('Analyze competitive offerings');
+  1643→  1643→          recommendations.push('Consider targeted discount or promotion');
+  1644→  1644→          break;
+  1645→  1645→        case 'recent_failures':
+  1646→  1646→          recommendations.push('Investigate recent transaction failures');
+  1647→  1647→          recommendations.push('Proactively reach out to resolve issues');
+  1648→  1648→          break;
+  1649→  1649→      }
+  1650→  1650→    }
+  1651→  1651→    
+  1652→  1652→    // Add risk-level specific recommendations
+  1653→  1653→    switch (riskLevel) {
+  1654→  1654→      case 'critical':
+  1655→  1655→        recommendations.unshift('Immediate intervention required - assign account manager');
+  1656→  1656→        break;
+  1657→  1657→      case 'high':
+  1658→  1658→        recommendations.unshift('Schedule proactive outreach call');
+  1659→  1659→        break;
+  1660→  1660→      case 'medium':
+  1661→  1661→        recommendations.push('Add to monitoring list for weekly review');
+  1662→  1662→        break;
+  1663→  1663→    }
+  1664→  1664→    
+  1665→  1665→    return [...new Set(recommendations)]; // Remove duplicates
+  1666→  1666→  }
+  1667→  1667→
+  1668→  1668→  /**
+  1669→  1669→   * Calculate prediction confidence based on factor quality
+  1670→  1670→   * @private
+  1671→  1671→   */
+  1672→  1672→  private calculatePredictionConfidence(factors: ChurnFactor[]): number {
+  1673→  1673→    // More concerning factors = higher confidence in prediction
+  1674→  1674→    const concerningFactors = factors.filter(f => f.isConcerning).length;
+  1675→  1675→    const baseConfidence = 0.7;
+  1676→  1676→    const factorBonus = (concerningFactors / factors.length) * 0.25;
+  1677→  1677→    
+  1678→  1678→    return Math.min(0.95, baseConfidence + factorBonus);
+  1679→  1679→  }
+  1680→  1680→
+  1681→  1681→  // ============== Payment Success Prediction ==============
+  1682→  1682→
+  1683→  1683→  /**
+  1684→  1684→   * Predict probability of payment success
+  1685→  1685→   * @param params - Payment parameters for prediction
+  1686→  1686→   * @returns Success prediction with risk indicators
+  1687→  1687→   */
+  1688→  1688→  async predictPaymentSuccess(params: PaymentSuccessParams): Promise<PredictionResult<SuccessPrediction>> {
+  1689→  1689→    const startTime = Date.now();
+  1690→  1690→    const cacheKey = this.generateCacheKey('success', params.amount, params.paymentMethod, params.customerId);
+  1691→  1691→    
+  1692→  1692→    const cached = this.getCached<PredictionResult<SuccessPrediction>>(cacheKey);
+  1693→  1693→    if (cached) return cached;
+  1694→  1694→
+  1695→  1695→    try {
+  1696→  1696→      // Calculate risk indicators
+  1697→  1697→      const indicators = this.calculateRiskIndicators(params);
+  1698→  1698→      
+  1699→  1699→      // Calculate base success rate from historical data
+  1700→  1700→      const baseSuccessRate = this.calculateBaseSuccessRate(params);
+  1701→  1701→      
+  1702→  1702→      // Adjust based on risk indicators
+  1703→  1703→      const riskAdjustment = this.calculateRiskAdjustment(indicators);
+  1704→  1704→      const successProbability = Math.max(0.05, Math.min(0.99, baseSuccessRate - riskAdjustment));
+  1705→  1705→      
+  1706→  1706→      // Classify risk level
+  1707→  1707→      const riskAssessment = this.classifyPaymentRisk(successProbability);
+  1708→  1708→      
+  1709→  1709→      // Estimate processing time
+  1710→  1710→      const estimatedProcessingTime = this.estimateProcessingTime(params);
+  1711→  1711→      
+  1712→  1712→      // Generate recommendations
+  1713→  1713→      const recommendations = this.generateSuccessRecommendations(indicators, riskAssessment);
+  1714→  1714→      
+  1715→  1715→      const prediction: SuccessPrediction = {
+  1716→  1716→        successProbability,
+  1717→  1717→        riskAssessment,
+  1718→  1718→        riskIndicators: indicators,
+  1719→  1719→        estimatedProcessingTime,
+  1720→  1720→        recommendations,
+  1721→  1721→      };
+  1722→  1722→      
+  1723→  1723→      const result: PredictionResult<SuccessPrediction> = {
+  1724→  1724→        predictions: prediction,
+  1725→  1725→        modelVersion: this.modelVersion.version,
+  1726→  1726→        predictedAt: new Date(),
+  1727→  1727→        confidence: this.calculateSuccessConfidence(indicators),
+  1728→  1728→        featuresUsed: indicators.map(i => i.name),
+  1729→  1729→        processingTimeMs: Date.now() - startTime,
+  1730→  1730→      };
+  1731→  1731→      
+  1732→  1732→      this.setCache(cacheKey, result);
+  1733→  1733→      
+  1734→  1734→      logger.info('Payment success prediction completed', {
+  1735→  1735→        event: 'ml.predictor.success-complete',
+  1736→  1736→        metadata: {
+  1737→  1737→          successProbability,
+  1738→  1738→          riskAssessment,
+  1739→  1739→          processingTimeMs: result.processingTimeMs,
+  1740→  1740→        },
+  1741→  1741→      });
+  1742→  1742→      
+  1743→  1743→      return result;
+  1744→  1744→    } catch (error) {
+  1745→  1745→      logger.error('Payment success prediction failed', {
+  1746→  1746→        event: 'ml.predictor.success-error',
+  1747→  1747→        error: error instanceof Error ? error : new Error(String(error)),
+  1748→  1748→      });
+  1749→  1749→      throw error instanceof AppError ? error : new AppError(
+  1750→  1750→        'Failed to generate success prediction',
+  1751→  1751→        ErrorCode.UNKNOWN_ERROR,
+  1752→  1752→        { cause: error instanceof Error ? error : undefined }
+  1753→  1753→      );
+  1754→  1754→    }
+  1755→  1755→  }
+  1756→  1756→
+  1757→  1757→  /**
+  1758→  1758→   * Calculate individual risk indicators
+  1759→  1759→   * @private
+  1760→  1760→   */
+  1761→  1761→  private calculateRiskIndicators(params: PaymentSuccessParams): RiskIndicator[] {
+  1762→  1762→    const indicators: RiskIndicator[] = [];
+  1763→  1763→    
+  1764→  1764→    // Amount-based risk
+  1765→  1765→    const amountRisk = this.calculateAmountRisk(params.amount);
+  1766→  1766→    indicators.push(amountRisk);
+  1767→  1767→    
+  1768→  1768→    // Payment method risk
+  1769→  1769→    const methodRisk = this.calculateMethodRisk(params.paymentMethod);
+  1770→  1770→    indicators.push(methodRisk);
+  1771→  1771→    
+  1772→  1772→    // Customer history risk
+  1773→  1773→    if (params.customerId) {
+  1774→  1774→      const profile = this.customerProfiles.get(params.customerId);
+  1775→  1775→      if (profile) {
+  1776→  1776→        indicators.push({
+  1777→  1777→          name: 'customer_success_rate',
+  1778→  1778→          value: profile.successRate,
+  1779→  1779→          riskScore: 1 - profile.successRate,
+  1780→  1780→          severity: profile.successRate < 0.8 ? 'warning' : 'info',
+  1781→  1781→          description: `Historical success rate: ${(profile.successRate * 100).toFixed(1)}%`,
+  1782→  1782→        });
+  1783→  1783→        
+  1784→  1784→        indicators.push({
+  1785→  1785→          name: 'customer_recency',
+  1786→  1786→          value: profile.daysSinceLastTransaction,
+  1787→  1787→          riskScore: Math.min(1, profile.daysSinceLastTransaction / 90),
+  1788→  1788→          severity: profile.daysSinceLastTransaction > 60 ? 'warning' : 'info',
+  1789→  1789→          description: `${profile.daysSinceLastTransaction} days since last transaction`,
+  1790→  1790→        });
+  1791→  1791→      } else {
+  1792→  1792→        indicators.push({
+  1793→  1793→          name: 'customer_history',
+  1794→  1794→          value: 0,
+  1795→  1795→          riskScore: 0.2,
+  1796→  1796→          severity: 'info',
+  1797→  1797→          description: 'New customer - limited history',
+  1798→  1798→        });
+  1799→  1799→      }
+  1800→  1800→    }
+  1801→  1801→    
+  1802→  1802→    // Time-based risk
+  1803→  1803→    if (params.hourOfDay !== undefined) {
+  1804→  1804→      const timeRisk = this.calculateTimeRisk(params.hourOfDay, params.dayOfWeek ?? 0);
+  1805→  1805→      indicators.push(timeRisk);
+  1806→  1806→    }
+  1807→  1807→    
+  1808→  1808→    // Device risk
+  1809→  1809→    if (params.deviceType) {
+  1810→  1810→      const deviceRisk = this.calculateDeviceRisk(params.deviceType);
+  1811→  1811→      indicators.push(deviceRisk);
+  1812→  1812→    }
+  1813→  1813→    
+  1814→  1814→    return indicators;
+  1815→  1815→  }
+  1816→  1816→
+  1817→  1817→  /**
+  1818→  1818→   * Calculate amount-based risk indicator
+  1819→  1819→   * @private
+  1820→  1820→   */
+  1821→  1821→  private calculateAmountRisk(amount: number): RiskIndicator {
+  1822→  1822→    // Define risk thresholds (in base currency minor units)
+  1823→  1823→    const thresholds = [
+  1824→  1824→      { limit: 10000, risk: 0.05 },     // Very low amounts
+  1825→  1825→      { limit: 50000, risk: 0.1 },      // Low amounts
+  1826→  1826→      { limit: 200000, risk: 0.15 },    // Medium amounts
+  1827→  1827→      { limit: 500000, risk: 0.25 },    // High amounts
+  1828→  1828→      { limit: 1000000, risk: 0.35 },   // Very high amounts
+  1829→  1829→      { limit: Infinity, risk: 0.5 },   // Extreme amounts
+  1830→  1830→    ];
+  1831→  1831→    
+  1832→  1832→    const threshold = thresholds.find(t => amount <= t.limit)!;
+  1833→  1833→    const severity = threshold.risk > 0.3 ? 'critical' : threshold.risk > 0.15 ? 'warning' : 'info';
+  1834→  1834→    
+  1835→  1835→    return {
+  1836→  1836→      name: 'amount_risk',
+  1837→  1837→      value: amount,
+  1838→  1838→      riskScore: threshold.risk,
+  1839→  1839→      severity,
+  1840→  1840→      description: `Amount ${this.formatCurrency(amount)} falls into ${severity} risk tier`,
+  1841→  1841→    };
+  1842→  1842→  }
+  1843→  1843→
+  1844→  1844→  /**
+  1845→  1845→   * Calculate payment method risk
+  1846→  1846→   * @private
+  1847→  1847→   */
+  1848→  1848→  private calculateMethodRisk(method: PaymentMethodType): RiskIndicator {
+  1849→  1849→    const methodRisks: Record<PaymentMethodType, { risk: number; description: string }> = {
+  1850→  1850→      card: { risk: 0.08, description: 'Card payments have good reliability' },
+  1851→  1851→      bank_transfer: { risk: 0.12, description: 'Bank transfers may have delays' },
+  1852→  1852→      wallet: { risk: 0.06, description: 'Wallet payments are highly reliable' },
+  1853→  1853→      ussd: { risk: 0.18, description: 'USSD has higher failure rates due to network issues' },
+  1854→  1854→      qr_code: { risk: 0.1, description: 'QR code payments are generally reliable' },
+  1855→  1855→      pay_with_bank: { risk: 0.15, description: 'Pay with bank depends on bank availability' },
+  1856→  1856→    };
+  1857→  1857→    
+  1858→  1858→    const { risk, description } = methodRisks[method];
+  1859→  1859→    const severity = risk > 0.15 ? 'warning' : 'info';
+  1860→  1860→    
+  1861→  1861→    return {
+  1862→  1862→      name: 'payment_method_risk',
+  1863→  1863→      value: 0,
+  1864→  1864→      riskScore: risk,
+  1865→  1865→      severity,
+  1866→  1866→      description,
+  1867→  1867→    };
+  1868→  1868→  }
+  1869→  1869→
+  1870→  1870→  /**
+  1871→  1871→   * Calculate time-based risk
+  1872→  1872→   * @private
+  1873→  1873→   */
+  1874→  1874→  private calculateTimeRisk(hourOfDay: number, dayOfWeek: number): RiskIndicator {
+  1875→  1875→    // Business hours are typically safer
+  1876→  1876→    const isBusinessHours = hourOfDay >= 8 && hourOfDay <= 18;
+  1877→  1877→    const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+  1878→  1878→    
+  1879→  1879→    let risk = 0.05; // Base low risk during business hours on weekdays
+  1880→  1880→    
+  1881→  1881→    if (!isBusinessHours) risk += 0.08;
+  1882→  1882→    if (isWeekend) risk += 0.05;
+  1883→  1883→    
+  1884→  1884→    // Late night transactions have higher risk
+  1885→  1885→    if (hourOfDay >= 0 && hourOfDay < 6) risk += 0.1;
+  1886→  1886→    
+  1887→  1887→    const severity = risk > 0.15 ? 'warning' : 'info';
+  1888→  1888→    
+  1889→  1889→    return {
+  1890→  1890→      name: 'temporal_risk',
+  1891→  1891→      value: hourOfDay,
+  1892→  1892→      riskScore: Math.min(0.4, risk),
+  1893→  1893→      severity,
+  1894→  1894→      description: `Transaction at ${hourOfDay}:00 on ${['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][dayOfWeek]}`,
+  1895→  1895→    };
+  1896→  1896→  }
+  1897→  1897→
+  1898→  1898→  /**
+  1899→  1899→   * Calculate device-based risk
+  1900→  1900→   * @private
+  1901→  1901→   */
+  1902→  1902→  private calculateDeviceRisk(deviceType: DeviceType): RiskIndicator {
+  1903→  1903→    const deviceRisks: Record<DeviceType, { risk: number; description: string }> = {
+  1904→  1904→      web_desktop: { risk: 0.05, description: 'Desktop web is stable' },
+  1905→  1905→      web_mobile: { risk: 0.08, description: 'Mobile web may have browser variations' },
+  1906→  1906→      ios_app: { risk: 0.04, description: 'iOS app provides consistent experience' },
+  1907→  1907→      android_app: { risk: 0.06, description: 'Android app is generally reliable' },
+  1908→  1908→      api: { risk: 0.03, description: 'API calls are well-handled' },
+  1909→  1909→      unknown: { risk: 0.12, description: 'Unknown device type adds uncertainty' },
+  1910→  1910→    };
+  1911→  1911→    
+  1912→  1912→    const { risk, description } = deviceRisks[deviceType];
+  1913→  1913→    
+  1914→  1914→    return {
+  1915→  1915→      name: 'device_risk',
+  1916→  1916→      value: 0,
+  1917→  1917→      riskScore: risk,
+  1918→  1918→      severity: risk > 0.08 ? 'warning' : 'info',
+  1919→  1919→      description,
+  1920→  1920→    };
+  1921→  1921→  }
+  1922→  1922→
+  1923→  1923→  /**
+  1924→  1924→   * Calculate base success rate from historical data
+  1925→  1925→   * @private
+  1926→  1926→   */
+  1927→  1927→  private calculateBaseSuccessRate(params: PaymentSuccessParams): number {
+  1928→  1928→    if (this.trainingData.length === 0) return 0.92; // Default high success rate
+  1929→  1929→    
+  1930→  1930→    // Calculate overall success rate from training data
+  1931→  1931→    const totalSuccess = this.trainingData.reduce((sum, d) => sum + d.successCount, 0);
+  1932→  1932→    const totalTxns = this.trainingData.reduce((sum, d) => sum + d.count, 0);
+  1933→  1933→    
+  1934→  1934→    return totalTxns > 0 ? totalSuccess / totalTxns : 0.92;
+  1935→  1935→  }
+  1936→  1936→
+  1937→  1937→  /**
+  1938→  1938→   * Calculate cumulative risk adjustment
+  1939→  1939→   * @private
+  1940→  1940→   */
+  1941→  1941→  private calculateRiskAdjustment(indicators: RiskIndicator[]): number {
+  1942→  1942→    return indicators.reduce((sum, ind) => sum + ind.riskScore * 0.1, 0);
+  1943→  1943→  }
+  1944→  1944→
+  1945→  1945→  /**
+  1946→  1946→   * Classify payment risk level
+  1947→  1947→   * @private
+  1948→  1948→   */
+  1949→  1949→  private classifyPaymentRisk(probability: number): PaymentRiskLevel {
+  1950→  1950→    if (probability >= 0.95) return 'very_low';
+  1951→  1951→    if (probability >= 0.85) return 'low';
+  1952→  1952→    if (probability >= 0.70) return 'medium';
+  1953→  1953→    if (probability >= 0.50) return 'high';
+  1954→  1954→    return 'very_high';
+  1955→  1955→  }
+  1956→  1956→
+  1957→  1957→  /**
+  1958→  1958→   * Estimate processing time based on parameters
+  1959→  1959→   * @private
+  1960→  1960→   */
+  1961→  1961→  private estimateProcessingTime(params: PaymentSuccessParams): number {
+  1962→  1962→    // Base times by payment method (in milliseconds)
+  1963→  1963→    const baseTimes: Record<PaymentMethodType, number> = {
+  1964→  1964→      card: 3000,
+  1965→  1965→      bank_transfer: 15000,
+  1966→  1966→      wallet: 2000,
+  1967→  1967→      ussd: 45000,
+  1968→  1968→      qr_code: 4000,
+  1969→  1969→      pay_with_bank: 12000,
+  1970→  1970→    };
+  1971→  1971→    
+  1972→  1972→    let estimatedTime = baseTimes[params.paymentMethod] || 5000;
+  1973→  1973→    
+  1974→  1974→    // Adjust for amount (larger amounts may take longer for verification)
+  1975→  1975→    if (params.amount > 500000) estimatedTime *= 1.3;
+  1976→  1976→    if (params.amount > 1000000) estimatedTime *= 1.5;
+  1977→  1977→    
+  1978→  1978→    // Add randomness to simulate variance
+  1979→  1979→    estimatedTime *= (0.9 + Math.random() * 0.2);
+  1980→  1980→    
+  1981→  1981→    return Math.round(estimatedTime);
+  1982→  1982→  }
+  1983→  1983→
+  1984→  1984→  /**
+  1985→  1985→   * Generate recommendations to improve success rate
+  1986→  1986→   * @private
+  1987→  1987→   */
+  1988→  1988→  private generateSuccessRecommendations(
+  1989→  1989→    indicators: RiskIndicator[],
+  1990→  1990→    riskLevel: PaymentRiskLevel
+  1991→  1991→  ): string[] {
+  1992→  1992→    const recommendations: string[] = [];
+  1993→  1993→    
+  1994→  1994→    for (const indicator of indicators) {
+  1995→  1995→      if (indicator.severity !== 'critical' && indicator.severity !== 'warning') continue;
+  1996→  1996→      
+  1997→  1997→      switch (indicator.name) {
+  1998→  1998→        case 'amount_risk':
+  1999→  1999→          recommendations.push('Consider splitting large transactions');
+  2000→  2000→          recommendations.push('Enable 3D Secure for added verification');
+
+[showing lines 1-2000 of 2002; use offset=2001 with limit to continue reading]
