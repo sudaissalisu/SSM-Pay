@@ -1,40 +1,44 @@
 "use server";
 
-import { z } from "zod";
 import 'dotenv/config';
-import { type Zainbox, type ZainboxCreationResponse, type ExchangeRateResponse } from "@/lib/definitions";
+import { type Zainbox, type ExchangeRateResponse } from "@/lib/definitions";
 import { zainpayClient, type CreateZainboxPayload } from "@/lib/zainpay-client";
-import { AppError, ErrorCode, wrapError, ValidationError } from "@/lib/errors";
+import { AppError, wrapError, ValidationError } from "@/lib/errors";
 import { logger } from "@/lib/logger";
 
-const zainboxSchema = z.object({
-  name: z.string().min(3, { message: "Name must be at least 3 characters long." }),
-  callbackUrl: z.string().url({ message: "Please enter a valid URL." }),
-  emailNotification: z.string().email({ message: "Please enter a valid email." }).optional().or(z.literal('')), 
-  description: z.string().optional(),
-  tags: z.string().optional(),
-  codeNamePrefix: z.string().max(3, "Prefix can be up to 3 characters.").optional(),
-  allowAutoInternalTransfer: z.coerce.boolean().default(false),
-});
+// Import validation schemas and helpers
+import {
+  PaymentInitSchema,
+  PaymentVerifySchema,
+  validatePaymentInit,
+  validateZainboxCreate,
+  formatValidationErrors,
+} from "@/lib/validation";
 
+/**
+ * Create a new Zainbox
+ * Validates input using Zod schema before processing
+ */
 export async function createZainbox(prevState: any, formData: FormData) {
-  const validatedFields = zainboxSchema.safeParse(
-    Object.fromEntries(formData.entries())
-  );
-
-  if (!validatedFields.success) {
+  // Convert FormData to plain object for validation
+  const rawData = Object.fromEntries(formData.entries());
+  
+  // Validate using centralized Zod schema
+  const validationResult = validateZainboxCreate(rawData);
+  
+  if (!validationResult.success) {
     logger.warn('Zainbox creation validation failed', {
       event: 'zainbox.create.validation',
-      metadata: { errors: validatedFields.error.flatten().fieldErrors },
+      metadata: { errors: validationResult.errors },
     });
     
     return {
       message: "Invalid form data.",
-      errors: validatedFields.error.flatten().fieldErrors,
+      errors: validationResult.errors,
     };
   }
   
-  const payload: CreateZainboxPayload = validatedFields.data;
+  const payload: CreateZainboxPayload = validationResult.data;
 
   try {
     const result = await zainpayClient.createZainbox(payload);
@@ -52,6 +56,9 @@ export async function createZainbox(prevState: any, formData: FormData) {
   }
 }
 
+/**
+ * List all Zainboxes for the merchant
+ */
 export async function listZainboxes(): Promise<Zainbox[]> {
   try {
     const result = await zainpayClient.listZainboxes();
@@ -63,12 +70,24 @@ export async function listZainboxes(): Promise<Zainbox[]> {
   }
 }
 
+/**
+ * Verify a transaction using its reference
+ * Validates reference parameter before making API call
+ */
 export async function verifyTransaction(txnRef: string) {
-  if (!txnRef) {
-    logger.warn('Verify transaction called without reference', {
-      event: 'transaction.verify.missing',
+  // Validate transaction reference
+  const refValidation = PaymentVerifySchema.safeParse({ reference: txnRef });
+  
+  if (!refValidation.success) {
+    logger.warn('Verify transaction called with invalid reference', {
+      event: 'transaction.verify.invalid',
+      metadata: { txnRef, errors: refValidation.error.flatten().fieldErrors },
     });
-    return { status: 'error', message: 'Transaction reference is missing.' };
+    
+    return { 
+      status: 'error', 
+      message: 'Invalid transaction reference. Reference must be at least 6 characters.' 
+    };
   }
 
   try {
@@ -82,7 +101,10 @@ export async function verifyTransaction(txnRef: string) {
   }
 }
 
-export async function getExchangeRate() {
+/**
+ * Get current exchange rates
+ */
+export async function getExchangeRate(): Promise<ExchangeRateResponse> {
   try {
     const result = await zainpayClient.getExchangeRate();
     return result;
@@ -91,27 +113,54 @@ export async function getExchangeRate() {
     logger.appError(appError, { action: 'getExchangeRate' });
     
     // Return a default/mock rate if API fails to avoid breaking the UI
-    return { buy: 1400, sell: 1450 };
+    return { code: 'fallback', description: 'Using fallback rate', data: [{ name: 'Fallback', code: 'FALLBACK', currencyCode: 'NGN', buy: 1400, sell: 1450 }] };
   }
 }
 
-// Payment initialization for dashboard payment form
+/**
+ * Initialize a payment transaction
+ * Uses comprehensive Zod validation for all payment fields
+ */
 export async function initializePayment(prevState: any, formData: FormData) {
-  const amount = formData.get('amount') as string;
-  const email = formData.get('email') as string;
-  const mobileNumber = formData.get('mobileNumber') as string;
-  const currency = formData.get('currency') as string || 'NGN';
+  // Extract raw data from FormData
+  const rawData = {
+    email: formData.get('email'),
+    amount: formData.get('amount') ? Number(formData.get('amount')) : undefined,
+    mobileNumber: formData.get('mobileNumber'),
+    currency: formData.get('currency') || 'NGN',
+  };
 
-  if (!amount || !email || !mobileNumber) {
-    return { error: 'Missing required fields: amount, email, or mobileNumber' };
+  // Validate using PaymentInitSchema
+  const validationResult = validatePaymentInit(rawData);
+
+  if (!validationResult.success) {
+    logger.warn('Payment initialization validation failed', {
+      event: 'payment.init.validation',
+      metadata: { errors: validationResult.errors },
+    });
+
+    return { 
+      error: formatValidationErrors(validationResult.errors),
+      fieldErrors: validationResult.errors,
+    };
   }
 
+  const validatedData = validationResult.data;
+
   try {
-    // Call the payment initialization API
+    // Call the payment initialization API with validated data
     const response = await fetch(`${process.env.BASE_URL || ''}/api/payment/init`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ amount, email, mobileNumber, currency }),
+      body: JSON.stringify({
+        amount: validatedData.amount,
+        email: validatedData.email,
+        mobileNumber: validatedData.mobileNumber,
+        currency: validatedData.currency,
+        customerId: validatedData.customerId,
+        description: validatedData.description,
+        paymentMethod: validatedData.paymentMethod,
+      }),
     });
 
     const result = await response.json();
@@ -123,7 +172,11 @@ export async function initializePayment(prevState: any, formData: FormData) {
     return { redirectUrl: result.redirectUrl };
   } catch (error) {
     const appError = wrapError(error, 'Payment initialization failed');
-    logger.appError(appError, { action: 'initializePayment', amount, email });
+    logger.appError(appError, { 
+      action: 'initializePayment', 
+      amount: validatedData.amount, 
+      email: validatedData.email 
+    });
     
     return { error: appError.getUserMessage() };
   }
