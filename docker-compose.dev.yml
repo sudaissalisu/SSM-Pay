@@ -1,0 +1,56 @@
+# =============================================================================
+# SSM-Pay Docker Compose - Development Override
+# =============================================================================
+# Use with: docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+# This file overrides production settings for local development
+# =============================================================================
+
+version: '3.8'
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: development
+    container_name: ssmpay-app-dev
+    environment:
+      - NODE_ENV=development
+      - NEXT_PUBLIC_APP_URL=http://localhost:3000
+    volumes:
+      - .:/app
+      - /app/node_modules
+      - /app/.next
+      - sqlite-data:/app/data
+    ports:
+      - "3000:3000"
+    command: ["bun", "run", "dev", "-H", "0.0.0.0"]
+    
+    # Enable hot reload by watching for file changes
+    develop:
+      watch:
+        - action: sync+restart
+          path: ./src
+          target: /app/src
+        - action: rebuild
+          path: package.json
+
+  redis:
+    ports:
+      - "6379:6379"
+    command: >
+      redis-server
+      --maxmemory 128mb
+      --maxmemory-policy allkeys-lru
+      --save ""
+
+  # Include monitoring tools in development
+  redis-commander:
+    profiles:
+      - default
+      - monitoring
+  
+  dozzle:
+    profiles:
+      - default
+      - monitoring
