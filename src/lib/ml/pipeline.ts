@@ -62,6 +62,71 @@ import {
 } from './types';
 import { generateHash, MLCache } from './utils';
 
+// Re-export types from sub-modules
+export {
+  PipelineMetricsSnapshot,
+  PipelineHealthStatus,
+  ModelHealthStatus,
+  PipelineMetrics,
+} from './pipeline-metrics';
+
+export type {
+  PipelineMetricsSnapshot,
+  PipelineHealthStatus,
+  ModelHealthStatus,
+} from './pipeline-metrics';
+
+export {
+  ABTestState,
+  ABTestManager,
+} from './ab-test-state';
+
+export type {
+  ABTestState,
+} from './ab-test-state';
+
+export {
+  executeSequential,
+  executeParallel,
+  executeDAG,
+  executeFallbackChain,
+  createModelExecutor,
+  getSortedModels,
+  checkShouldStopEarly,
+  generateCacheKey as execGenerateCacheKey,
+  getCachedResult,
+  setCachedResult,
+} from './pipeline-execution';
+
+export type {
+  ExecutionContext,
+  ModelExecutor,
+} from './pipeline-execution';
+
+export {
+  aggregateResults,
+  extractPredictionValue,
+  extractNumericValue,
+  calculateAgreement,
+  averageConfidence,
+} from './pipeline-aggregation';
+
+// Import implementations
+import { PipelineMetrics } from './pipeline-metrics';
+import { ABTestManager } from './ab-test-state';
+import {
+  executeSequential,
+  executeParallel,
+  executeDAG,
+  executeFallbackChain,
+  createModelExecutor,
+  getSortedModels,
+  checkShouldStopEarly,
+  getCachedResult,
+  setCachedResult,
+} from './pipeline-execution';
+import { aggregateResults, averageConfidence } from './pipeline-aggregation';
+
 // ============== Model Interface ==============
 
 /**
@@ -88,25 +153,7 @@ export interface MLPredictor {
   /**
    * Get current model health status
    */
-  getHealth(): ModelHealthStatus;
-}
-
-/**
- * Health status of a model
- */
-export interface ModelHealthStatus {
-  /** Whether model is healthy */
-  isHealthy: boolean;
-  /** Last prediction timestamp */
-  lastPredictionAt?: Date;
-  /** Average response time in ms */
-  avgResponseTimeMs: number;
-  /** Error rate (0-1) */
-  errorRate: number;
-  /** Number of predictions made */
-  totalPredictions: number;
-  /** Additional health info */
-  details?: Record<string, unknown>;
+  getHealth(): import('./pipeline-metrics').ModelHealthStatus;
 }
 
 // ============== Pipeline Events ==============
@@ -176,7 +223,7 @@ export class MLPipeline {
   private metrics: PipelineMetrics;
   
   /** A/B test state tracker */
-  private abTestState: ABTestState | null = null;
+  private abTestManager: ABTestManager;
 
   constructor(config: PipelineConfig) {
     this.config = this.validateConfig(config);
@@ -185,11 +232,12 @@ export class MLPipeline {
       config.caching.ttlMs
     );
     this.metrics = new PipelineMetrics();
+    this.abTestManager = new ABTestManager();
     
     logger.info(`MLPipeline initialized: ${config.name} (${config.id})`);
     
     if (config.abTesting?.enabled) {
-      this.initializeABTest(config.abTesting);
+      this.abTestManager.initialize(config.abTesting);
     }
   }
 
@@ -341,7 +389,7 @@ export class MLPipeline {
   /**
    * Emit an event to all listeners
    */
-  private emit<T>(type: PipelineEventType, data: T, executionId?: string): void {
+  emit<T>(type: PipelineEventType, data: T, executionId?: string): void {
     const event: PipelineEvent<T> = {
       type,
       timestamp: new Date(),
@@ -402,26 +450,24 @@ export class MLPipeline {
 
     // Check cache first
     if (effectiveConfig.caching.enabled) {
-      const cacheKey = this.generateCacheKey(input);
-      const cached = this.cache.get(cacheKey);
+      const cached = getCachedResult(this.cache, this.config.id, input);
       
       if (cached) {
-        this.emit(PipelineEventType.CACHE_HIT, { cacheKey }, executionId);
+        this.emit(PipelineEventType.CACHE_HIT, { }, executionId);
         
         return this.createCachedResult(
           cached,
           executionId,
-          startTime,
-          cacheKey
+          startTime
         );
       }
       
-      this.emit(PipelineEventType.CACHE_MISS, { cacheKey }, executionId);
+      this.emit(PipelineEventType.CACHE_MISS, { }, executionId);
     }
 
     try {
       // Handle A/B testing if enabled
-      if (effectiveConfig.abTesting?.enabled && this.abTestState) {
+      if (effectiveConfig.abTesting?.enabled && this.abTestManager.isActive()) {
         return await this.executeWithABTesting(
           input,
           effectiveConfig,
@@ -430,36 +476,40 @@ export class MLPipeline {
         );
       }
 
+      // Create model executor with retry logic
+      const executeModel = createModelExecutor(
+        this.models,
+        this.emit.bind(this),
+        this.metrics
+      );
+
       // Execute based on mode
       let modelResults: Map<string, BasePredictionResult>;
 
       switch (effectiveConfig.mode) {
         case PipelineMode.SEQUENTIAL:
-          modelResults = await this.executeSequential(
-            input,
-            effectiveConfig,
-            executionId
+          modelResults = await executeSequential(
+            { input, config: effectiveConfig, executionId },
+            executeModel,
+            checkShouldStopEarly
           );
           break;
         case PipelineMode.PARALLEL:
-          modelResults = await this.executeParallel(
-            input,
-            effectiveConfig,
-            executionId
+          modelResults = await executeParallel(
+            { input, config: effectiveConfig, executionId },
+            executeModel
           );
           break;
         case PipelineMode.DAG:
-          modelResults = await this.executeDAG(
-            input,
-            effectiveConfig,
-            executionId
+          modelResults = await executeDAG(
+            { input, config: effectiveConfig, executionId },
+            executeModel
           );
           break;
         case PipelineMode.FALLBACK_CHAIN:
-          modelResults = await this.executeFallbackChain(
-            input,
-            effectiveConfig,
-            executionId
+          modelResults = await executeFallbackChain(
+            { input, config: effectiveConfig, executionId },
+            executeModel
           );
           break;
         default:
@@ -467,7 +517,7 @@ export class MLPipeline {
       }
 
       // Aggregate results
-      const aggregatedResult = this.aggregateResults(
+      const aggregatedResult = aggregateResults(
         modelResults,
         effectiveConfig.aggregation
       );
@@ -477,8 +527,7 @@ export class MLPipeline {
 
       // Cache result
       if (effectiveConfig.caching.enabled) {
-        const cacheKey = this.generateCacheKey(input);
-        this.cache.set(cacheKey, aggregatedResult);
+        setCachedResult(this.cache, this.config.id, input, aggregatedResult);
       }
 
       const result: PipelineResult = {
@@ -519,544 +568,7 @@ export class MLPipeline {
     }
   }
 
-  // ============== Execution Strategies ==============
-
-  /**
-   * Execute models sequentially in priority order
-   */
-  private async executeSequential(
-    input: unknown,
-    config: PipelineConfig,
-    executionId: string
-  ): Promise<Map<string, BasePredictionResult>> {
-    const results = new Map<string, BasePredictionResult>();
-    const sortedModels = this.getSortedModels(config);
-
-    for (const modelConfig of sortedModels) {
-      if (!modelConfig.enabled) continue;
-
-      const result = await this.executeModelWithRetry(
-        modelConfig.modelId,
-        input,
-        config,
-        executionId
-      );
-
-      results.set(modelConfig.modelId, result);
-
-      // In sequential mode, check if we should stop early
-      // e.g., if fraud detected with high confidence
-      if (this.shouldStopEarly(result, config)) {
-        logger.debug(
-          `Early stopping after ${modelConfig.modelId} due to high-confidence result`
-        );
-        break;
-      }
-    }
-
-    return results;
-  }
-
-  /**
-   * Execute all models in parallel
-   */
-  private async executeParallel(
-    input: unknown,
-    config: PipelineConfig,
-    executionId: string
-  ): Promise<Map<string, BasePredictionResult>> {
-    const results = new Map<string, BasePredictionResult>();
-    const enabledModels = config.models.filter((m) => m.enabled);
-
-    // Create promises for all models
-    const promises = enabledModels.map(async (modelConfig) => {
-      const result = await this.executeModelWithRetry(
-        modelConfig.modelId,
-        input,
-        config,
-        executionId
-      );
-      return { modelId: modelConfig.modelId, result };
-    });
-
-    // Execute with overall timeout
-    const timeoutPromise = new Promise<never>((_, reject) => {
-      setTimeout(() => reject(new Error('Pipeline execution timeout')), config.timeout.totalMs);
-    });
-
-    const settledResults = await Promise.race([
-      Promise.allSettled(promises),
-      timeoutPromise,
-    ]);
-
-    // Process results
-    if (Array.isArray(settledResults)) {
-      for (const settled of settledResults) {
-        if (settled.status === 'fulfilled') {
-          results.set(settled.value.modelId, settled.value.result);
-        } else {
-          logger.error(`Model execution failed: ${settled.reason}`);
-        }
-      }
-    }
-
-    return results;
-  }
-
-  /**
-   * Execute models respecting dependency graph (DAG mode)
-   */
-  private async executeDAG(
-    input: unknown,
-    config: PipelineConfig,
-    executionId: string
-  ): Promise<Map<string, BasePredictionResult>> {
-    const results = new Map<string, BasePredictionResult>();
-    const executed = new Set<string>();
-    const executing = new Set<string>();
-
-    const executeWithDependencies = async (
-      modelId: string
-    ): Promise<void> => {
-      if (executed.has(modelId)) return;
-      if (executing.has(modelId)) return; // Prevent cycles
-
-      const modelConfig = config.models.find((m) => m.modelId === modelId);
-      if (!modelConfig || !modelConfig.enabled) {
-        executed.add(modelId);
-        return;
-      }
-
-      executing.add(modelId);
-
-      // Execute dependencies first
-      if (modelConfig.dependencies) {
-        for (const dep of modelConfig.dependencies) {
-          await executeWithDependencies(dep);
-        }
-      }
-
-      // Execute this model
-      const result = await this.executeModelWithRetry(
-        modelId,
-        input,
-        config,
-        executionId
-      );
-
-      results.set(modelId, result);
-      executed.add(modelId);
-      executing.delete(modelId);
-    };
-
-    // Execute all enabled models (dependencies will be resolved automatically)
-    for (const modelConfig of config.models) {
-      if (modelConfig.enabled) {
-        await executeWithDependencies(modelConfig.modelId);
-      }
-    }
-
-    return results;
-  }
-
-  /**
-   * Execute models in fallback chain (try each until one succeeds)
-   */
-  private async executeFallbackChain(
-    input: unknown,
-    config: PipelineConfig,
-    executionId: string
-  ): Promise<Map<string, BasePredictionResult>> {
-    const results = new Map<string, BasePredictionResult>();
-    const sortedModels = this.getSortedModels(config);
-
-    for (const modelConfig of sortedModels) {
-      if (!modelConfig.enabled) continue;
-
-      try {
-        const result = await this.executeModelWithRetry(
-          modelConfig.modelId,
-          input,
-          config,
-          executionId
-        );
-
-        results.set(modelConfig.modelId, result);
-
-        // If successful, stop the chain
-        if (result.success && result.confidence >= 0.5) {
-          logger.debug(
-            `Fallback chain stopped at ${modelConfig.modelId} (successful prediction)`
-          );
-          break;
-        }
-      } catch (error) {
-        logger.warn(
-          `Model ${modelConfig.modelId} failed in fallback chain, trying next...`,
-          error
-        );
-
-        // Try fallback model if specified
-        if (modelConfig.fallbackModelId) {
-          const fallbackConfig = config.models.find(
-            (m) => m.modelId === modelConfig.fallbackModelId
-          );
-          
-          if (fallbackConfig && fallbackConfig.enabled) {
-            const fallbackResult = await this.executeModelWithRetry(
-              fallbackConfig.modelId,
-              input,
-              config,
-              executionId
-            );
-            
-            results.set(fallbackConfig.modelId, fallbackResult);
-            
-            if (fallbackResult.success) {
-              break;
-            }
-          }
-        }
-      }
-    }
-
-    return results;
-  }
-
-  // ============== Model Execution with Retry ==============
-
-  /**
-   * Execute a single model with retry logic
-   */
-  private async executeModelWithRetry(
-    modelId: string,
-    input: unknown,
-    config: PipelineConfig,
-    executionId: string
-  ): Promise<BasePredictionResult> {
-    const model = this.models.get(modelId);
-    
-    if (!model) {
-      return this.createModelError(
-        modelId,
-        `Model '${modelId}' is not registered`,
-        'MODEL_NOT_FOUND'
-      );
-    }
-
-    if (!model.isAvailable()) {
-      return this.createModelError(
-        modelId,
-        `Model '${modelId}' is not available`,
-        'MODEL_UNAVAILABLE'
-      );
-    }
-
-    this.emit(PipelineEventType.MODEL_STARTED, { modelId }, executionId);
-
-    const retryConfig = config.retry;
-    let lastError: Error | null = null;
-    let attempt = 0;
-
-    while (attempt <= (retryConfig.enabled ? retryConfig.maxAttempts : 0)) {
-      try {
-        // Apply timeout
-        const result = await Promise.race([
-          model.predict(input),
-          new Promise<BasePredictionResult>((_, reject) =>
-            setTimeout(
-              () => reject(new Error('Model prediction timeout')),
-              config.timeout.perModelMs
-            )
-          ),
-        ]);
-
-        this.emit(PipelineEventType.MODEL_COMPLETED, { modelId, result }, executionId);
-        this.metrics.recordModelExecution(modelId, Date.now(), true);
-
-        return result;
-      } catch (error) {
-        lastError = error as Error;
-        attempt++;
-
-        if (attempt <= retryConfig.maxAttempts && retryConfig.enabled) {
-          const delay = Math.min(
-            retryConfig.initialDelayMs *
-              Math.pow(retryConfig.backoffMultiplier, attempt - 1),
-            retryConfig.maxDelayMs
-          );
-
-          this.emit(
-            PipelineEventType.MODEL_RETRY,
-            { modelId, attempt, delay, error: lastError.message },
-            executionId
-          );
-
-          logger.warn(
-            `Model ${modelId} attempt ${attempt} failed, retrying in ${delay}ms...`
-          );
-
-          await this.sleep(delay);
-        }
-      }
-    }
-
-    // All retries exhausted
-    this.emit(
-      PipelineEventType.MODEL_FAILED,
-      { modelId, error: lastError?.message, attempts: attempt },
-      executionId
-    );
-
-    this.metrics.recordModelExecution(modelId, Date.now(), false);
-
-    return this.createModelError(
-      modelId,
-      lastError?.message || 'Unknown error',
-      'MAX_RETRIES_EXCEEDED'
-    );
-  }
-
-  // ============== Result Aggregation ==============
-
-  /**
-   * Aggregate results from multiple models into a single prediction
-   */
-  aggregateResults(
-    modelResults: Map<string, BasePredictionResult>,
-    aggregationConfig: AggregationConfig
-  ): AggregatedResult {
-    const resultsArray = Array.from(modelResults.values());
-    const successfulResults = resultsArray.filter((r) => r.success);
-
-    if (successfulResults.length === 0) {
-      return {
-        finalPrediction: null,
-        confidence: 0,
-        agreement: 0,
-        agreeingModels: 0,
-        totalModels: resultsArray.length,
-        disagreements: [],
-        method: aggregationConfig.method,
-      };
-    }
-
-    switch (aggregationConfig.method) {
-      case AggregationMethod.MAJORITY_VOTE:
-        return this.majorityVoteAggregation(successfulResults, modelResults);
-      case AggregationMethod.WEIGHTED_VOTE:
-        return this.weightedVoteAggregation(successfulResults, modelResults, aggregationConfig);
-      case AggregationMethod.AVERAGE:
-        return this.averageAggregation(successfulResults);
-      case AggregationMethod.WEIGHTED_AVERAGE:
-        return this.weightedAverageAggregation(successfulResults, aggregationConfig);
-      case AggregationMethod.MAX:
-        return this.maxAggregation(successfulResults);
-      case AggregationMethod.MIN:
-        return this.minAggregation(successfulResults);
-      default:
-        return this.averageAggregation(successfulResults);
-    }
-  }
-
-  /**
-   * Majority vote aggregation for classification tasks
-   */
-  private majorityVoteAggregation(
-    results: BasePredictionResult[],
-    allResults: Map<string, BasePredictionResult>
-  ): AggregatedResult {
-    // Extract predictions (assuming they have predictedClass or value)
-    const votes = new Map<string, number>();
-    
-    for (const result of results) {
-      const prediction = this.extractPredictionValue(result);
-      const key = String(prediction);
-      votes.set(key, (votes.get(key) || 0) + 1);
-    }
-
-    // Find majority
-    let maxVotes = 0;
-    let majorityPrediction: string = '';
-    
-    for (const [prediction, count] of votes.entries()) {
-      if (count > maxVotes) {
-        maxVotes = count;
-        majorityPrediction = prediction;
-      }
-    }
-
-    const confidence = maxVotes / results.length;
-    const disagreements = this.findDisagreements(results, majorityPrediction);
-
-    return {
-      finalPrediction: majorityPrediction,
-      confidence,
-      agreement: confidence,
-      agreeingModels: maxVotes,
-      totalModels: results.length,
-      disagreements: disagreements.length > 0 ? disagreements : undefined,
-      method: AggregationMethod.MAJORITY_VOTE,
-    };
-  }
-
-  /**
-   * Weighted vote aggregation
-   */
-  private weightedVoteAggregation(
-    results: BasePredictionResult[],
-    allResults: Map<string, BasePredictionResult>,
-    config: AggregationConfig
-  ): AggregatedResult {
-    const votes = new Map<string, number>();
-    const weights = this.getModelWeights();
-
-    for (const result of results) {
-      const weight = weights.get(result.modelId) || 1 / results.length;
-      const prediction = String(this.extractPredictionValue(result));
-      votes.set(prediction, (votes.get(prediction) || 0) + weight);
-    }
-
-    let maxScore = 0;
-    let winningPrediction = '';
-
-    for (const [prediction, score] of votes.entries()) {
-      if (score > maxScore) {
-        maxScore = score;
-        winningPrediction = prediction;
-      }
-    }
-
-    const disagreements = this.findDisagreements(results, winningPrediction);
-
-    return {
-      finalPrediction: winningPrediction,
-      confidence: Math.min(maxScore, 1),
-      agreement: this.calculateAgreement(results),
-      agreeingModels: this.countAgreeingModels(results, winningPrediction),
-      totalModels: results.length,
-      disagreements: disagreements.length > 0 ? disagreements : undefined,
-      method: AggregationMethod.WEIGHTED_VOTE,
-    };
-  }
-
-  /**
-   * Simple average aggregation for numeric outputs
-   */
-  private averageAggregation(results: BasePredictionResult[]): AggregatedResult {
-    const values = results.map((r) => this.extractNumericValue(r));
-    const avg = values.reduce((a, b) => a + b, 0) / values.length;
-    const std = Math.sqrt(
-      values.reduce((sum, v) => sum + (v - avg) ** 2, 0) / values.length
-    );
-
-    return {
-      finalPrediction: avg,
-      confidence: 1 / (1 + std), // Higher confidence when std is lower
-      agreement: this.calculateAgreement(results),
-      agreeingModels: results.length,
-      totalModels: results.length,
-      method: AggregationMethod.AVERAGE,
-    };
-  }
-
-  /**
-   * Weighted average aggregation
-   */
-  private weightedAverageAggregation(
-    results: BasePredictionResult[],
-    config: AggregationConfig
-  ): AggregatedResult {
-    const weights = this.getModelWeights();
-    let weightedSum = 0;
-    let totalWeight = 0;
-
-    for (const result of results) {
-      const weight = weights.get(result.modelId) || 1 / results.length;
-      const value = this.extractNumericValue(result);
-      weightedSum += value * weight;
-      totalWeight += weight;
-    }
-
-    const avg = totalWeight > 0 ? weightedSum / totalWeight : 0;
-
-    return {
-      finalPrediction: avg,
-      confidence: this.averageConfidence(results),
-      agreement: this.calculateAgreement(results),
-      agreeingModels: results.length,
-      totalModels: results.length,
-      method: AggregationMethod.WEIGHTED_AVERAGE,
-    };
-  }
-
-  /**
-   * Max aggregation (take highest score/value)
-   */
-  private maxAggregation(results: BasePredictionResult[]): AggregatedResult {
-    let maxValue = -Infinity;
-    let maxResult: BasePredictionResult | null = null;
-
-    for (const result of results) {
-      const value = this.extractNumericValue(result);
-      if (value > maxValue) {
-        maxValue = value;
-        maxResult = result;
-      }
-    }
-
-    return {
-      finalPrediction: maxValue,
-      confidence: maxResult?.confidence ?? 0,
-      agreement: this.calculateAgreement(results),
-      agreeingModels: this.countAgreeingModels(results, maxValue),
-      totalModels: results.length,
-      method: AggregationMethod.MAX,
-    };
-  }
-
-  /**
-   * Min aggregation (take lowest score/value)
-   */
-  private minAggregation(results: BasePredictionResult[]): AggregatedResult {
-    let minValue = Infinity;
-    let minResult: BasePredictionResult | null = null;
-
-    for (const result of results) {
-      const value = this.extractNumericValue(result);
-      if (value < minValue) {
-        minValue = value;
-        minResult = result;
-      }
-    }
-
-    return {
-      finalPrediction: minValue,
-      confidence: minResult?.confidence ?? 0,
-      agreement: this.calculateAgreement(results),
-      agreeingModels: this.countAgreeingModels(results, minValue),
-      totalModels: results.length,
-      method: AggregationMethod.MIN,
-    };
-  }
-
-  // ============== A/B Testing ==============
-
-  /**
-   * Initialize A/B testing state
-   */
-  private initializeABTest(config: ABTestingConfig): void {
-    this.abTestState = {
-      config,
-      controlCount: 0,
-      treatmentCount: 0,
-      controlMetrics: {},
-      treatmentMetrics: {},
-      startedAt: new Date(),
-    };
-
-    logger.info(`A/B test initialized: ${config.testId}`);
-  }
+  // ============== A/B Testing Integration ==============
 
   /**
    * Execute pipeline with A/B testing
@@ -1067,12 +579,13 @@ export class MLPipeline {
     executionId: string,
     startTime: number
   ): Promise<PipelineResult> {
-    if (!this.abTestState) {
+    const abState = this.abTestManager.getState();
+    if (!abState) {
       throw new Error('A/B testing state not initialized');
     }
 
     // Determine which group this request belongs to
-    const isTreatment = this.assignABGroup(config.abTesting!);
+    const isTreatment = this.abTestManager.assignGroup(config.abTesting!);
     const variant = isTreatment ? config.abTesting!.treatment : config.abTesting!.control;
 
     this.emit(
@@ -1092,14 +605,23 @@ export class MLPipeline {
     };
 
     // Execute with variant config
-    const modelResults = await this.executeParallel(input, variantConfig, executionId);
-    const aggregatedResult = this.aggregateResults(modelResults, variantConfig.aggregation);
+    const executeModel = createModelExecutor(
+      this.models,
+      this.emit.bind(this),
+      this.metrics
+    );
+
+    const modelResults = await executeParallel(
+      { input, config: variantConfig, executionId },
+      executeModel
+    );
+    const aggregatedResult = aggregateResults(modelResults, variantConfig.aggregation);
 
     // Record metrics for A/B test
-    this.recordABMetrics(isTreatment, aggregatedResult);
+    this.abTestManager.recordMetrics(isTreatment, aggregatedResult);
 
     // Calculate A/B test results
-    const abTestResults = this.calculateABTestResults();
+    const abTestResults = this.abTestManager.calculateResults();
 
     return {
       executionId,
@@ -1115,290 +637,13 @@ export class MLPipeline {
     };
   }
 
-  /**
-   * Assign request to control or treatment group
-   */
-  private assignABGroup(config: ABTestingConfig): boolean {
-    if (!this.abTestState) return false;
-
-    const random = Math.random() * 100;
-    const isTreatment = random < config.trafficSplit;
-
-    if (isTreatment) {
-      this.abTestState.treatmentCount++;
-    } else {
-      this.abTestState.controlCount++;
-    }
-
-    return isTreatment;
-  }
-
-  /**
-   * Record metrics for A/B test analysis
-   */
-  private recordABMetrics(isTreatment: boolean, result: AggregatedResult): void {
-    if (!this.abTestState) return;
-
-    const metrics = isTreatment
-      ? this.abTestState.treatmentMetrics
-      : this.abTestState.controlMetrics;
-
-    // Record basic metrics
-    metrics['total_requests'] = (metrics['total_requests'] || 0) + 1;
-    metrics['avg_confidence'] =
-      ((metrics['avg_confidence'] || 0) * (metrics['total_requests'] - 1) +
-        result.confidence) /
-      metrics['total_requests'];
-    metrics['avg_agreement'] =
-      ((metrics['avg_agreement'] || 0) * (metrics['total_requests'] - 1) +
-        result.agreement) /
-      metrics['total_requests'];
-  }
-
-  /**
-   * Calculate current A/B test statistical results
-   */
-  private calculateABTestResults(): ABTestResults | undefined {
-    if (!this.abTestState) return undefined;
-
-    const { config, controlCount, treatmentCount, controlMetrics, treatmentMetrics } =
-      this.abTestState;
-
-    // Basic significance check (simplified - use proper stats library for production)
-    const minSampleSize = config.minSampleSize;
-    const hasEnoughSamples =
-      controlCount >= minSampleSize && treatmentCount >= minSampleSize;
-
-    // Simplified p-value calculation (use t-test in production)
-    const pValue = hasEnoughSamples ? this.simplifiedPValue(controlMetrics, treatmentMetrics) : 1;
-    const isSignificant = pValue < config.significanceLevel;
-
-    // Determine winner based on primary metric
-    let winningVariant: 'control' | 'treatment' | undefined;
-    if (isSignificant) {
-      const controlPrimary = controlMetrics[config.metrics[0]] ?? 0;
-      const treatmentPrimary = treatmentMetrics[config.metrics[0]] ?? 0;
-      
-      // Assuming higher is better for now
-      winningVariant = treatmentPrimary > controlPrimary ? 'treatment' : 'control';
-    }
-
-    return {
-      testId: config.testId,
-      control: {
-        variantName: config.control.name,
-        sampleSize: controlCount,
-        metrics: controlMetrics,
-      },
-      treatment: {
-        variantName: config.treatment.name,
-        sampleSize: treatmentCount,
-        metrics: treatmentMetrics,
-      },
-      isSignificant,
-      pValue,
-      winningVariant,
-      recommendation: isSignificant
-        ? `Consider switching to ${winningVariant} variant`
-        : 'Continue collecting data',
-    };
-  }
-
-  /**
-   * Very simplified p-value approximation
-   * NOTE: Use proper statistical library for production!
-   */
-  private simplifiedPValue(
-    controlMetrics: Record<string, number>,
-    treatmentMetrics: Record<string, number>
-  ): number {
-    // This is a placeholder - implement proper statistical test
-    const diff = Math.abs(
-      (treatmentMetrics['avg_confidence'] ?? 0) -
-        (controlMetrics['avg_confidence'] ?? 0)
-    );
-    
-    // Rough approximation - smaller difference = higher p-value
-    return Math.max(0.01, 1 - diff * 10);
-  }
-
   // ============== Helper Methods ==============
-
-  /**
-   * Get models sorted by priority
-   */
-  private getSortedModels(config: PipelineConfig): PipelineModelConfig[] {
-    return [...config.models].sort((a, b) => a.priority - b.priority);
-  }
-
-  /**
-   * Get model weights from configuration
-   */
-  private getModelWeights(): Map<string, number> {
-    const weights = new Map<string, number>();
-    const enabledModels = this.config.models.filter((m) => m.enabled);
-    const totalWeight = enabledModels.reduce((sum, m) => sum + m.weight, 0);
-
-    for (const model of enabledModels) {
-      weights.set(model.modelId, model.weight / totalWeight);
-    }
-
-    return weights;
-  }
-
-  /**
-   * Extract prediction value from result
-   */
-  private extractPredictionValue(result: BasePredictionResult): unknown {
-    const resultAny = result as Record<string, unknown>;
-    return (
-      resultAny.predictedClass ??
-      resultAny.value ??
-      resultAny.isAnomalous ??
-      resultAny.riskScore ??
-      null
-    );
-  }
-
-  /**
-   * Extract numeric value from result
-   */
-  private extractNumericValue(result: BasePredictionResult): number {
-    const value = this.extractPredictionValue(result);
-    return typeof value === 'number' ? value : result.confidence;
-  }
-
-  /**
-   * Find disagreements among model predictions
-   */
-  private findDisagreements(
-    results: BasePredictionResult[],
-    majorityPrediction: string
-  ): DisagreementDetail[] {
-    const disagreements: DisagreementDetail[] = [];
-
-    for (const result of results) {
-      const prediction = String(this.extractPredictionValue(result));
-      if (prediction !== majorityPrediction) {
-        disagreements.push({
-          modelId: result.modelId,
-          prediction,
-          majorityPrediction,
-          deviationScore: Math.abs(result.confidence - 0.5) * 2,
-        });
-      }
-    }
-
-    return disagreements;
-  }
-
-  /**
-   * Calculate agreement level among models (0-1)
-   */
-  private calculateAgreement(results: BasePredictionResult[]): number {
-    if (results.length <= 1) return 1;
-
-    const predictions = results.map((r) => String(this.extractPredictionValue(r)));
-    const uniquePredictions = new Set(predictions);
-
-    // Perfect agreement if all same
-    if (uniquePredictions.size === 1) return 1;
-
-    // No agreement if all different
-    if (uniquePredictions.size === results.length) return 0;
-
-    // Partial agreement based on majority proportion
-    const counts = new Map<string, number>();
-    for (const pred of predictions) {
-      counts.set(pred, (counts.get(pred) || 0) + 1);
-    }
-
-    const maxCount = Math.max(...counts.values());
-    return maxCount / results.length;
-  }
-
-  /**
-   * Count models that agree with given prediction
-   */
-  private countAgreeingModels(
-    results: BasePredictionResult[],
-    targetPrediction: unknown
-  ): number {
-    return results.filter(
-      (r) => String(this.extractPredictionValue(r)) === String(targetPrediction)
-    ).length;
-  }
-
-  /**
-   * Average confidence across results
-   */
-  private averageConfidence(results: BasePredictionResult[]): number {
-    if (results.length === 0) return 0;
-    return results.reduce((sum, r) => sum + r.confidence, 0) / results.length;
-  }
-
-  /**
-   * Check if we should stop early in sequential mode
-   */
-  private shouldStopEarly(
-    result: BasePredictionResult,
-    config: PipelineConfig
-  ): boolean {
-    // Stop if high confidence detection (e.g., clear fraud)
-    const resultAny = result as Record<string, unknown>;
-    
-    if (resultAny.isAnomalous === true && result.confidence > 0.95) {
-      return true;
-    }
-
-    if (
-      typeof resultAny.riskScore === 'number' &&
-      (resultAny.riskScore as number) > 90
-    ) {
-      return true;
-    }
-
-    return false;
-  }
 
   /**
    * Generate unique execution ID
    */
   private generateExecutionId(): string {
     return `exec_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-  }
-
-  /**
-   * Generate cache key from input data
-   */
-  private generateCacheKey(input: unknown): string {
-    const prefix = this.config.id;
-    const hash = generateHash(input);
-    return `${prefix}:${hash}`;
-  }
-
-  /**
-   * Create error result for a model
-   */
-  private createModelError(
-    modelId: string,
-    message: string,
-    code: string
-  ): BasePredictionResult {
-    const error: PredictionError = {
-      code,
-      message,
-    };
-
-    return {
-      predictionId: this.generateExecutionId(),
-      modelId,
-      timestamp: new Date(),
-      processingTimeMs: 0,
-      success: false,
-      confidence: 0,
-      error,
-    };
   }
 
   /**
@@ -1421,8 +666,7 @@ export class MLPipeline {
   private createCachedResult(
     cached: AggregatedResult,
     executionId: string,
-    startTime: number,
-    cacheKey: string
+    startTime: number
   ): PipelineResult {
     return {
       executionId,
@@ -1469,19 +713,12 @@ export class MLPipeline {
     };
   }
 
-  /**
-   * Sleep helper for delays
-   */
-  private sleep(ms: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, ms));
-  }
-
   // ============== Metrics & Monitoring ==============
 
   /**
    * Get pipeline performance metrics
    */
-  getMetrics(): PipelineMetricsSnapshot {
+  getMetrics(): import('./pipeline-metrics').PipelineMetricsSnapshot {
     return this.metrics.getSnapshot();
   }
 
@@ -1513,29 +750,22 @@ export class MLPipeline {
   /**
    * Get current A/B test state (if active)
    */
-  getABTestState(): ABTestState | null {
-    return this.abTestState;
+  getABTestState(): import('./ab-test-state').ABTestState | null {
+    return this.abTestManager.getState();
   }
 
   /**
    * End A/B test and get final results
    */
   endABTest(): ABTestResults | null {
-    if (!this.abTestState) return null;
-
-    const results = this.calculateABTestResults();
-    this.abTestState = null;
-
-    logger.info(`A/B test ended: ${results?.testId}`);
-
-    return results;
+    return this.abTestManager.end();
   }
 
   /**
    * Health check for the entire pipeline
    */
-  async healthCheck(): Promise<PipelineHealthStatus> {
-    const modelHealths = new Map<string, ModelHealthStatus>();
+  async healthCheck(): Promise<import('./pipeline-metrics').PipelineHealthStatus> {
+    const modelHealths = new Map<string, import('./pipeline-metrics').ModelHealthStatus>();
 
     for (const [modelId, model] of this.models) {
       modelHealths.set(modelId, model.getHealth());
@@ -1569,114 +799,4 @@ export class MLPipeline {
     this.models.clear();
     logger.info(`Pipeline disposed: ${this.config.id}`);
   }
-}
-
-// ============== Metrics Collector ==============
-
-/**
- * Internal metrics collector for pipeline monitoring
- */
-class PipelineMetrics {
-  private totalExecutions = 0;
-  private successfulExecutions = 0;
-  private failedExecutions = 0;
-  private totalExecutionTimeMs = 0;
-  private modelExecutions = new Map<string, { count: number; successes: number }>();
-  private totalRetries = 0;
-  private lastExecutionTime: Date | null = null;
-
-  recordExecution(durationMs: number, success: boolean): void {
-    this.totalExecutions++;
-    this.totalExecutionTimeMs += durationMs;
-    this.lastExecutionTime = new Date();
-
-    if (success) {
-      this.successfulExecutions++;
-    } else {
-      this.failedExecutions++;
-    }
-  }
-
-  recordModelExecution(modelId: string, _timestamp: number, success: void | boolean): void {
-    const current = this.modelExecutions.get(modelId) || { count: 0, successes: 0 };
-    current.count++;
-    if (success) current.successes++;
-    this.modelExecutions.set(modelId, current);
-  }
-
-  recordRetry(): void {
-    this.totalRetries++;
-  }
-
-  getTotalRetries(): number {
-    return this.totalRetries;
-  }
-
-  getLastExecutionTime(): Date | null {
-    return this.lastExecutionTime;
-  }
-
-  getSnapshot(): PipelineMetricsSnapshot {
-    return {
-      totalExecutions: this.totalExecutions,
-      successfulExecutions: this.successfulExecutions,
-      failedExecutions: this.failedExecutions,
-      successRate:
-        this.totalExecutions > 0
-          ? this.successfulExecutions / this.totalExecutions
-          : 0,
-      avgExecutionTimeMs:
-        this.totalExecutions > 0
-          ? this.totalExecutionTimeMs / this.totalExecutions
-          : 0,
-      totalRetries: this.totalRetries,
-      modelExecutions: Object.fromEntries(this.modelExecutions),
-      lastExecutionTime: this.lastExecutionTime,
-    };
-  }
-
-  reset(): void {
-    this.totalExecutions = 0;
-    this.successfulExecutions = 0;
-    this.failedExecutions = 0;
-    this.totalExecutionTimeMs = 0;
-    this.modelExecutions.clear();
-    this.totalRetries = 0;
-  }
-}
-
-// ============== Exported Types ==============
-
-/** Snapshot of pipeline metrics */
-export interface PipelineMetricsSnapshot {
-  totalExecutions: number;
-  successfulExecutions: number;
-  failedExecutions: number;
-  successRate: number;
-  avgExecutionTimeMs: number;
-  totalRetries: number;
-  modelExecutions: Record<string, { count: number; successes: number }>;
-  lastExecutionTime: Date | null;
-}
-
-/** Pipeline health status */
-export interface PipelineHealthStatus {
-  isHealthy: boolean;
-  pipelineId: string;
-  totalModels: number;
-  healthyModels: number;
-  unhealthyModels: number;
-  modelHealths: Map<string, ModelHealthStatus>;
-  uptime: number;
-  lastExecutionAt: Date | null;
-}
-
-/** Internal A/B test state */
-interface ABTestState {
-  config: ABTestingConfig;
-  controlCount: number;
-  treatmentCount: number;
-  controlMetrics: Record<string, number>;
-  treatmentMetrics: Record<string, number>;
-  startedAt: Date;
 }
